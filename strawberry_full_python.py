@@ -80,7 +80,8 @@ class ParticleAssigner:
         self.acc0 = None
         self.visited = np.zeros(pot.size, dtype = bool) # We may want to review this assignement
         self.new_min = 3.4e38 # this is just initialising the variable
-        self._long_range_fac = 0.5 * self._delta_th *self._Omega_m * self._scale_factor**2 * self._H0 * self._H0
+        # In spherical symetry to get threshold at <delta> we need delta' = 2pi*<delta> - 1
+        self._long_range_fac = 0.5 * (1 + (2*np.pi*self._delta_th - 1)) *self._Omega_m * self._scale_factor**2 * self._H0 * self._H0
         
         self.i_in = set()
         self.i_surf = set()
@@ -184,25 +185,30 @@ class ParticleAssigner:
                 self._delta_th = 0.
             elif "coll" in threshold:
                 self._delta_th = 3/5*(3*np.pi/2)**(1/3.)
-            elif "ta" in threshold:
+            elif "ta-lin" in threshold:
                 self._delta_th = 3/5*(3*np.pi/4)**(1/3.)
+            elif "ta-eul" in threshold:
+                self._delta_th = 9*np.pi**2/16 - 1
             else:
-                raise ValueError(f'threshold definition {threshold} was not recognized options include:\n "EdS-cond", "EdS-coll", "EdS-ta", "LCDM-cond", "LCDM-coll", and "LCDM-ta"')
+                raise ValueError(f'threshold definition {threshold} was not recognized options include:\n "EdS-cond", "EdS-coll", "EdS-ta-eul", "EdS-ta-lin", "LCDM-cond", "LCDM-coll", and "LCDM-ta-eul", "LCDM-ta-lin"')
         elif 'LCDM' in threshold:
             self._zeta = self.get_zeta(self._scale_factor) 
             if "cond" in threshold:
                 self._delta_th = 9/10 * (2 * self.w(self._scale_factor))**(1/3)
             elif "coll" in threshold:
                 self._delta_th = 3/5 * self.g(self._scale_factor) * (1 + self._zeta) * (self.w(self._scale_factor)/self._zeta)**(1./3.)
-            elif "ta" in threshold:
+            elif "ta-lin" in threshold:
                 t_c = self.time_of_a(self._scale_factor)
                 t_ta = t_c/2
                 a_ta = self.Newton_Raphson(f = lambda a: self.time_of_a(a) - t_ta, xi = 0.1, dx = 1e-6, tol = 1e-6)
-                self._delta_th = 3/5 * self.g(a_ta) * (1 + self._zeta) * (self.w(a_ta)/self._zeta)**(1./3.)
+                zeta_ta = self.get_zeta(a_ta)
+                self._delta_th = 3/5 * self.g(a_ta) * (1 + zeta_ta) * (self.w(a_ta)/zeta_ta)**(1./3.)
+            elif "ta-eul" in threshold:
+                self._delta_th = self._Omega_L/self._Omega_m * self._scale_factor**3/self._zeta - 1
             else:
-                raise ValueError(f'threshold definition {threshold} was not recognized options include:\n "EdS-cond", "EdS-coll", "EdS-ta", "LCDM-cond", "LCDM-coll", and "LCDM-ta"')
+                raise ValueError(f'threshold definition {threshold} was not recognized options include:\n "EdS-cond", "EdS-coll", "EdS-ta-eul", "EdS-ta-lin", "LCDM-cond", "LCDM-coll", and "LCDM-ta-eul", "LCDM-ta-lin"')
         else:
-            raise ValueError(f'threshold definition {threshold} was not recognized options include:\n "EdS-cond", "EdS-coll", "EdS-ta", "LCDM-cond", "LCDM-coll", and "LCDM-ta"')
+            raise ValueError(f'threshold definition {threshold} was not recognized options include:\n "EdS-cond", "EdS-coll", "EdS-ta-eul", "EdS-ta-lin", "LCDM-cond", "LCDM-coll", and "LCDM-ta-eul", "LCDM-ta-lin"')
         return None
     
     
@@ -370,7 +376,7 @@ class ParticleAssigner:
         phi_arr: (array of floats) updated list of boosted potentials of the particles in l
         '''
         if len(phi_arr) == 0:
-            l = np.array([i,], dtype = 'i4')
+            l = np.array([i,], dtype = 'i8')
             phi_arr = np.array([self.phi_boost(i),], dtype = 'f8')
             return l, phi_arr
         #if not self.is_sorted(phi_arr): phi_arr = np.sort(phi_arr) # This is a temporary fix... which slows the code a lot. Have to find where the ordering is lost
@@ -736,8 +742,9 @@ class ParticleAssigner:
         i_in_arr = list(i_in)
         v_mean = np.median(self.vel[i_in_arr], axis = 0) # remove the mean velocity of the group
         v_in = self.vel[i_in_arr] - v_mean
-        K = 0.5 * np.sum(v_in * v_in, axis = 1)
-        E = K + self.phi_boost(i_in_arr)
+        x_in = self.recentre_positions(self.pos[i_in_arr], self.x0)
+        K = 0.5 * np.sum(v_in * v_in, axis = 1) + self._scale_factor * self.H_a(self._scale_factor) * np.sum(x_in * v_in, axis = 1)
+        E = K + self._scale_factor**2 * self.phi_boost(i_in_arr) + 0.5*(self._Omega_m/2 + 1)*self._H0**2* self._scale_factor**-1 * np.sum(x_in * x_in, axis = 1)
         bound = E < self.phi_boost(i_sad)
         mask = np.zeros(len(i_in_arr),dtype = bool)
         mask[bound] = True
