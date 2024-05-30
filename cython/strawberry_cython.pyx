@@ -4,7 +4,7 @@ cimport numpy as cnp
 from scipy.integrate import quad
 from libcpp cimport bool as cbool
 from libcpp.pair cimport pair as cpair
-from math import floor
+#from math import floor
 #from posix.time cimport clock_gettime, timespec, CLOCK_MONOTONIC
 
 cdef extern from "cpp_priority_queue.hpp":
@@ -323,7 +323,7 @@ cdef class ParticleAssigner:
             elif "ta-eul" in threshold:
                 res = 9*np.pi**2/16 - 1
             else:
-                raise ValueError(f'threshold definition {threshold} was not recognized options include:\n "EdS-cond", "EdS-coll", "EdS-ta", "LCDM-cond", "LCDM-coll", and "LCDM-ta"')
+                raise ValueError(f'threshold definition {threshold} was not recognized options include:\n "EdS-cond", "EdS-coll", "EdS-ta-lin", "EdS-ta-eul", "LCDM-cond", "LCDM-coll", "LCDM-ta-lin", and "LCDM-ta-lin"')
         elif 'LCDM' in threshold:
             zeta = self.get_zeta(self._scale_factor) 
             if "cond" in threshold:
@@ -339,9 +339,9 @@ cdef class ParticleAssigner:
             elif "ta-eul" in threshold:
                 res = self._Omega_L/self._Omega_m * self._scale_factor**3/zeta - 1
             else:
-                raise ValueError(f'threshold definition {threshold} was not recognized options include:\n "EdS-cond", "EdS-coll", "EdS-ta", "LCDM-cond", "LCDM-coll", and "LCDM-ta"')
+                raise ValueError(f'threshold definition {threshold} was not recognized options include:\n "EdS-cond", "EdS-coll", "EdS-ta-lin", "EdS-ta-eul", "LCDM-cond", "LCDM-coll", "LCDM-ta-lin", and "LCDM-ta-lin"')
         else:
-            raise ValueError(f'threshold definition {threshold} was not recognized options include:\n "EdS-cond", "EdS-coll", "EdS-ta", "LCDM-cond", "LCDM-coll", and "LCDM-ta"')
+            raise ValueError(f'threshold definition {threshold} was not recognized options include:\n "EdS-cond", "EdS-coll", "EdS-ta-lin", "EdS-ta-eul", "LCDM-cond", "LCDM-coll", "LCDM-ta-lin", and "LCDM-ta-lin"')
         return res
     
     
@@ -409,6 +409,9 @@ cdef class ParticleAssigner:
     #cpdef cnp.ndarray[long, ndim = 1, cast = True] get_surface_ranks(self):
     #    cdef cnp.ndarray[long, ndim = 1, cast = True] res = np.asarray(self.surface_rank)
     #    return res
+    cpdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] get_group_mask(self):
+        cdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] res = self.to_bool_array(self.group_mask)
+        return res
     
     cpdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] get_surface_mask(self):
         cdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] res = self.to_bool_array(self.surface_mask)
@@ -1024,7 +1027,7 @@ cdef class ParticleAssigner:
         cdef cnp.double_t temp_xx
         cdef double dist
         cdef double phi_curr = self.phi_boost(i)
-        cdef long j, k, index
+        cdef long j, k, index, j_old
         cdef long[:] ngbs_temp
         cdef int counter = 1
         cdef double phi_j
@@ -1059,11 +1062,38 @@ cdef class ParticleAssigner:
                 elem = (self.phi_boost(k), k)
                 self.subsurface_queue.push(elem)
                 self._current_subsurface_size += 1
+        
+        if self.subsurface_queue.empty():
+            #self._too_far = True
+            if self.verbose: print(f"subsurface queue started empty {i}", flush = True)
+            return
+        
         elem = self.subsurface_queue.top()
         j = elem.second
-        
+        j_old = -1
         
         while self.phi_boost(j) - phi_curr < 0:
+            #========= Test ================ 
+            if self.visited[j]: # If we've already put j in the subgroup or is part of the main group
+                if self.verbose: print(f"Particle {j} already visited but in subsurface queue...", flush = True)
+                self.subsurface_queue.pop()
+                self.subsurface_mask[j] = False
+                self._current_subsurface_size -= 1
+                if self.subsurface_queue.empty():
+                    #self._too_far = True
+                    if self.verbose: print(f"subsurface queue empty {j}", flush = True)
+                    return
+                elem = self.subsurface_queue.top()
+                j = elem.second
+                continue
+            
+            
+            if j == j_old:
+                self._too_far = True
+                if self.verbose: print(f"ya in a loop it seems {j}", flush = True)
+                return
+            j_old = j
+            #=============================== 
             #print(j, end = ' ', flush = True)
             counter += 1        
             # By taking this one we ensure we are always going down the lowest brach first.
@@ -1081,19 +1111,20 @@ cdef class ParticleAssigner:
                     self._too_far = True
                     return
     
-                if self._current_subgroup_size > 4*self._current_group_size:
+                if self._current_subgroup_size > self._current_group_size:
                     #raise RecursionError(f"Trying to add in a structure which is much larger than the current structure. Exiting.")
                     if self.verbose:
                         print(f"Trying to add in a structure which is much larger than the current structure {self._current_subgroup_size} > {self._current_group_size}. Exiting.")
                     self._too_far = True
                     return
+            
             # If we are in this we already know that j has a lower potential
             # So we can add it directly and remove it from the surface
             self.subsurface_queue.pop()
             self.subsurface_mask[j] = False
             self._current_subsurface_size -= 1
-            if self.visited[j]:
-                continue
+            #if self.visited[j]:
+            #    continue
             self.subgroup_mask[j] = True
             self.visited[j] = True
             self._current_subgroup_size += 1
@@ -1113,7 +1144,12 @@ cdef class ParticleAssigner:
                     self.subsurface_queue.push(elem)
                     self._current_subsurface_size += 1
                     self.subsurface_mask[k] = True
-                    
+            #========= Test ================        
+            if self.subsurface_queue.empty():
+                #self._too_far = True
+                if self.verbose: print(f"subsurface queue empty {j}", flush = True)
+                return
+            #=============================== 
             # Take subsurface particle with lowest potential
             elem = self.subsurface_queue.top()
             j = elem.second
@@ -1196,6 +1232,14 @@ cdef class ParticleAssigner:
             if i_cons == i_prev:
                 raise RecursionError(f"The algorithm seems to have gotten stuck at i = {i_cons} with {self._current_group_size} particles assigned and {self._current_surface_size} pending...")
             i_prev = i_cons
+            
+            if self.visited[i_cons]: # If we've already put i_cons in the group but it was still in the surface.
+                if self.verbose: print(f"{i_cons} had already been visited but was still in surface queue")
+                self.surface_queue.pop()
+                self.surface_mask[i_cons] = False
+                self._current_surface_size -= 1
+                continue
+                
             self.visited[i_cons] = True
             ngbs_temp = self.ngbs[i_cons]
             
@@ -1229,6 +1273,7 @@ cdef class ParticleAssigner:
             
             if if_cond:
                 # Tag i_cons as part of the main group
+                #print(f"mg {i_cons} |", end = " ")
                 self.group[i_cons] = self._current_group
                 self.group_mask[i_cons] = True
                 self._current_group_size += 1
@@ -1309,6 +1354,7 @@ cdef class ParticleAssigner:
                         qelem = self.subsurface_queue.top()
                         self.subsurface_queue.pop()
                         k = qelem.second
+                        #print(f"ss {k} |", end = " ")
                         if self.surface_mask[k] or self.visited[k]:
                             # Avoid duplicates or going back to a particle that has already been visited
                             continue
@@ -1327,7 +1373,7 @@ cdef class ParticleAssigner:
                         qelem = self.subgroup_queue.top()
                         self.subgroup_queue.pop()
                         k = qelem.second
-
+                        #print(f"sg {k} |", end= " ")
                         self.group[k] = self._current_group
                         self.group_mask[k] = True
                         self._current_group_size += 1
