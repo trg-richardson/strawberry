@@ -54,7 +54,6 @@ cdef class ParticleAssigner:
     Lbox: (float) simulation boxsize
     Omega_Lambda: (float) Density of dark energy in units of the critical density (default to Einstein-de Sitter Omega_Lambda = 0.)
     scale_factor: (float) Snapshot scale factor 'a' (defaults to a = 1.)
-    substruct: (bool) switch enabling the output of substructure properties
     no_binding: (bool) switch turning off the binding check
     verbose: (bool) switch toggling verbosity
     
@@ -97,8 +96,8 @@ cdef class ParticleAssigner:
     cdef cnp.double_t[:] pot
     cdef cnp.double_t[:,:] pos
     cdef cnp.double_t[:,:] vel
-
-    cdef cbool substruct
+    cdef long[:] ids_fof
+    
     cdef cbool verbose
     cdef cbool no_binding
     cdef str threshold
@@ -154,8 +153,8 @@ cdef class ParticleAssigner:
     cdef cbool _too_far
         
     def __init__(self, cnp.ndarray[long, ndim = 2] ngbs, cnp.ndarray[double, ndim = 1] pot, cnp.ndarray[double, ndim = 2] pos, cnp.ndarray[double, ndim = 2] vel, 
-                        cnp.double_t scale_factor = 1., cnp.double_t Omega_m = 1., cnp.double_t Lbox = 1000., str threshold = 'EdS-cond',
-                 substruct = False, no_binding = False, verbose = False):
+                 cnp.double_t scale_factor = 1., cnp.double_t Omega_m = 1., cnp.double_t Lbox = 1000., str threshold = 'EdS-cond',
+                 no_binding = False, verbose = False, cnp.ndarray[long, ndim = 1] ids_fof = np.empty([0], dtype = 'i8')):
         
         self.nparts = ngbs.shape[0]
         self.nngbs = ngbs.shape[1]
@@ -164,8 +163,8 @@ cdef class ParticleAssigner:
         self.pot = pot
         self.pos = pos
         self.vel = vel
+        self.ids_fof = ids_fof
         
-        self.substruct = substruct
         self.verbose = verbose
         self.no_binding = no_binding
         self.threshold = threshold
@@ -402,6 +401,9 @@ cdef class ParticleAssigner:
         cdef cnp.ndarray[long, ndim = 1, cast = True] res = np.asarray(self.subgroup)
         return res
     
+    cpdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] get_visited(self):
+        cdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] res = self.to_bool_array(self.visited)
+        return res
     #cpdef cnp.ndarray[long, ndim = 1, cast = True] get_surface_indices(self):
     #    cdef cnp.ndarray[long, ndim = 1, cast = True] res = np.asarray(self.surface_indices)
     #    return res
@@ -476,6 +478,18 @@ cdef class ParticleAssigner:
         # Reset the cache values
         self._computed = np.zeros(self.pot.size, dtype = bool)
         self._phi = np.zeros(self.pot.size, dtype = 'f8') 
+        return
+    
+    def set_fof_ids(self, ids_fof):
+        '''
+        Function which sets 'ids_fof' the ids of a precomputed group (not necesarrily FoF) used to find the first minimum of the boosted potential.
+        
+        Parameters:
+        ----------
+        x0: (array of d-floats) d-dimensional refference acceleration vector.
+
+        '''
+        self.ids_fof = ids_fof 
         return
     
     def recentre_positions_numpy(self,pos, x0):
@@ -881,9 +895,8 @@ cdef class ParticleAssigner:
     
     cpdef long first_minimum(self, long i0, double r = 1):
         cdef int counter = 1
-        cdef k
         cdef long i = i0
-        cdef long j
+        cdef long j, k
         cdef cnp.double_t dist = 0.0
         cdef cnp.double_t[:] x
         cdef cnp.double_t temp_xx = 0.0
@@ -922,6 +935,17 @@ cdef class ParticleAssigner:
             raise RecursionError(f"The minimum is {float(dist):.3} (> {float(r):.3}) Mpc away from the starting position.\
                                   \nThis may indicate that there is either no miminum or that you are starting index is too far away.")
         return i
+    
+    cpdef long fof_minimum(self, long[:] ids_fof):
+        cdef long k, i_min
+        cdef cnp.double_t phi_min
+        cdef cpair[cnp.double_t, long] elem
+        cdef cpp_pq loc_queue = cpp_pq(compare_first)
+        for k in ids_fof:
+            elem = (self.phi_boost(k), k)
+            loc_queue.push(elem)
+        elem = loc_queue.top()
+        return elem.second
     
     cpdef void fill_below(self, cnp.int64_t i):
         '''
@@ -1065,7 +1089,12 @@ cdef class ParticleAssigner:
         
         if self.subsurface_queue.empty():
             #self._too_far = True
-            if self.verbose: print(f"subsurface queue started empty {i}", flush = True)
+            if self.verbose: 
+                print(f"subsurface queue started empty {i}", flush = True)
+                print(f"ngbs: {[ngb for ngb in self.ngbs[i]]}", flush = True)
+                print(f"pots: {[self.phi_boost(ngb) for ngb in self.ngbs[i]]}", flush = True)
+                print(f"visited: {[self.visited[ngb] for ngb in self.ngbs[i]]}", flush = True)
+                print(f"groups: {[self.group[ngb] for ngb in self.ngbs[i]]}", flush = True)
             return
         
         elem = self.subsurface_queue.top()
@@ -1258,11 +1287,18 @@ cdef class ParticleAssigner:
                 self.max_dist = dist
             
             if not low_pot_cond:
-                #This can happen when hitting the boundaries
-
+                # This can happen when hitting boundaries, or for very small local minima
+                # These particles should be recaptured by the code later if we just skip them.
+                if self.verbose: 
+                    print(f"{i_cons} low_pot_cond failed: Has no neighbours with lower potential", flush = True)
+                    print(f"Relative potentials: {[self.phi_boost(ngb) - self.phi_boost(i_cons) for ngb in self.ngbs[i_cons]]}", flush = True)
+                    print(f"Neighbouring groups: {[self.group[ngb] for ngb in self.ngbs[i_cons]]}", flush = True)
+                    print(f"Neighbouring visits: {[self.visited[ngb] for ngb in self.ngbs[i_cons]]}", flush = True)
+                    print(f"Neighbouring surface: {[self.surface_mask[ngb] for ngb in self.ngbs[i_cons]]}", flush = True)
                 self.surface_queue.pop()
                 self._current_surface_size -= 1
                 self.surface_mask[i_cons] = False
+                self.visited[i_cons] = False
                 continue
             
             if_cond = True
@@ -1297,6 +1333,7 @@ cdef class ParticleAssigner:
                         # Avoid duplicates or going back to a particle that has already been visited
                         continue
                     else:
+                    
                         # Insert particle in sorted order
                         self.surface_mask[k] = True
                         qelem = (self.phi_boost(k), k)
@@ -1321,6 +1358,11 @@ cdef class ParticleAssigner:
                 if self._too_far:
                     # Traveled too far or adding in a large group.
                     if self.verbose: print('Traveled too far exitting... ', self._current_subgroup_size, end = ' ', flush = True)
+                    while not self.subgroup_queue.empty():
+                        qelem = self.subgroup_queue.top()
+                        self.subgroup_queue.pop()
+                        k = qelem.second
+                        self.visited[k] = False
                     
                     while not self.subsurface_queue.empty():
                         qelem = self.subsurface_queue.top()
@@ -1333,6 +1375,12 @@ cdef class ParticleAssigner:
                 if self.new_min <= phi_min:
                     # Moved into a lower potential well => exit
                     if self.verbose: print('Found lower minimum:', self._current_subgroup_size, i_cons, end = ' ', flush = True)
+                    while not self.subgroup_queue.empty():
+                        qelem = self.subgroup_queue.top()
+                        self.subgroup_queue.pop()
+                        k = qelem.second
+                        self.visited[k] = False
+                    
                     while not self.subsurface_queue.empty():
                         qelem = self.subsurface_queue.top()
                         self.subsurface_queue.pop()
@@ -1374,6 +1422,7 @@ cdef class ParticleAssigner:
                         self.subgroup_queue.pop()
                         k = qelem.second
                         #print(f"sg {k} |", end= " ")
+                        self.visited[k] = True
                         self.group[k] = self._current_group
                         self.group_mask[k] = True
                         self._current_group_size += 1
@@ -1397,7 +1446,7 @@ cdef class ParticleAssigner:
                             phi_max = phi_k
                             i_max = k      
                     self._current_subgroup_size = 0 
-                if self._current_group_size > 0.25*self.pot.size:
+                if self._current_group_size > 0.25*len(self.pot):
                     # Temporary measure to get a catalogue in EdS-cond
                     if self.verbose: print('Reached size limit (npart/4):', self._current_group_size, end = ' ', flush = True)
                     break
@@ -1447,7 +1496,7 @@ cdef class ParticleAssigner:
             v_in[j,:] = self.vel[i]
         
         for j in range(self.vel.shape[1]):
-            v_mean[j] = np.median(v_in[:,j]) # remove the mean velocity of the group
+            v_mean[j] = np.mean(v_in[:,j]) # remove the mean velocity of the group
         #v_in -= v_mean
 
         x = self.recentre_positions(self.pos[i_sad],self.pos[i_min])
@@ -1460,7 +1509,7 @@ cdef class ParticleAssigner:
             #temp_vx += v[j]*x[j]
             #temp_vv += v[j]*v[j]
         phi_p_sad = self._scale_factor**2 * self.phi_boost(i_sad) + 0.5*(self._Omega_m/2 + 1)*self._H0**2* self._scale_factor**-1 * temp_xx
-        
+        #phi_p_sad = self.phi_boost(i_sad)
         for i, index in enumerate(i_in_arr):
             x = self.recentre_positions(self.pos[index],self.pos[i_min])
             for j in range(len(x)):
@@ -1475,7 +1524,9 @@ cdef class ParticleAssigner:
             
             
             K[i] = 0.5 * temp_vv + self._scale_factor * self.H_a(self._scale_factor) * temp_xv
-            phi_p[i] = self._scale_factor**2 * self.phi_boost(i) + 0.5*(self._Omega_m/2 + 1)*self._H0**2* self._scale_factor**-1 * temp_xx # check scale factors in second term
+            phi_p[i] = self._scale_factor**2 * self.phi_boost(index) + 0.5*(self._Omega_m/2 + 1)*self._H0**2* self._scale_factor**-1 * temp_xx # check scale factors in second term
+            #K[i] = 0.5 * temp_vv 
+            #phi_p[i] = self.phi_boost(i)
             E[i] = K[i] + phi_p[i] # <= Converted to physical potential
             if E[i] < phi_p_sad:
                 bound_mask[i] = True
@@ -1503,14 +1554,19 @@ cdef class ParticleAssigner:
         '''
         cdef long i_min, i_sad
         self.visited = np.zeros(self.pot.size, dtype = bool) # For now we just reset the list
-        self.acc0 = acc0
-        self.x0 = self.pos[i0]
+        self.set_acc0(acc0)
+        self.set_x0(self.pos[i0])
         
         self._current_group += 1
         self._current_subgroup = 0
         # Verify that the minimum is not too far away.
-        i0 = self.first_minimum(i0, r)
+        if len(self.ids_fof) > 0:
+            i0 = self.fof_minimum(self.ids_fof)
+        else:
+            i0 = self.first_minimum(i0, r)
         # Find all particles with potential lower than minimum (This should only give back 1 particle)
+        self.set_x0(self.pos[i0])
+        
         self.fill_below(i0)
         # Grow potential surface
         i_min, i_sad = self.grow()

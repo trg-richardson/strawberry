@@ -609,6 +609,8 @@ class ParticleAssigner:
                 break
                 
             i_cons = id_surf[0]
+            #if i_cons in set([897, 8976, 74952, 33551, 28515, 19489, 81852, 49637, 21478, 98875, 84203]):
+            #    print('booh', end = ' ')
             if len_in == len(i_in) and len_surf == len(i_surf) and i_cons == i_prev:
                 raise RecursionError(f"The algorithm seems to have gotten stuck at i = {i_cons} with {len(i_in)} particles assinged and {len(i_surf)} pending...")
             i_prev = i_cons
@@ -745,7 +747,8 @@ class ParticleAssigner:
         x_in = self.recentre_positions(self.pos[i_in_arr], self.x0)
         K = 0.5 * np.sum(v_in * v_in, axis = 1) + self._scale_factor * self.H_a(self._scale_factor) * np.sum(x_in * v_in, axis = 1)
         E = K + self._scale_factor**2 * self.phi_boost(i_in_arr) + 0.5*(self._Omega_m/2 + 1)*self._H0**2* self._scale_factor**-1 * np.sum(x_in * x_in, axis = 1)
-        bound = E < self.phi_boost(i_sad)
+        x_sad = self.recentre_positions(self.pos[i_sad], self.x0)
+        bound = E < self.phi_boost(i_sad) + 0.5*(self._Omega_m/2 + 1)*self._H0**2* self._scale_factor**-1 * np.sum(x_sad * x_sad)
         mask = np.zeros(len(i_in_arr),dtype = bool)
         mask[bound] = True
         return mask

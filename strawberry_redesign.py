@@ -727,7 +727,7 @@ class ParticleAssigner:
                 
                 if self.new_min <= phi_min:
                     # Moved into a lower potential well => exit
-                    if self.verbose: print('Found lower minimum:', np.sum(self.subgroup_mask), end = ' ', flush = True)
+                    if self.verbose: print(f'Found lower minimum ({i_cons}):', np.sum(self.subgroup_mask), end = ' ', flush = True)
                     self.debug_out["exit"] = 'LM'
                     self.visited[self.subgroup_mask | self.subsurface_mask] = False
                     self.debug_out["i_in_new"] = np.where(self.subgroup_mask)[0]
