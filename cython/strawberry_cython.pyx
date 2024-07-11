@@ -154,7 +154,7 @@ cdef class ParticleAssigner:
         
     def __init__(self, cnp.ndarray[long, ndim = 2] ngbs, cnp.ndarray[double, ndim = 1] pot, cnp.ndarray[double, ndim = 2] pos, cnp.ndarray[double, ndim = 2] vel, 
                  cnp.double_t scale_factor = 1., cnp.double_t Omega_m = 1., cnp.double_t Lbox = 1000., str threshold = 'EdS-cond',
-                 no_binding = False, verbose = False, cnp.ndarray[long, ndim = 1] ids_fof = np.empty([0], dtype = 'i8')):
+                 no_binding = False, verbose = False, cnp.ndarray[long, ndim = 1] ids_fof = np.empty([0], dtype = 'i8'), cbool custom_delta = False,  cnp.double_t delta = 0.):
         
         self.nparts = ngbs.shape[0]
         self.nngbs = ngbs.shape[1]
@@ -175,7 +175,10 @@ cdef class ParticleAssigner:
         self._Omega_k = 0.
         self._scale_factor = scale_factor
         self._H0 = 100. #In theory we should need to touch this
-        self._delta_th = self.get_delta_th(threshold)
+        if custom_delta:
+            self._delta_th = delta
+        else:
+            self._delta_th = self.get_delta_th(threshold)
         
         self.x0 = None
         self.acc0 = None
@@ -316,25 +319,24 @@ cdef class ParticleAssigner:
             if "cond" in threshold:
                 res = 0.
             elif "coll" in threshold:
-                res = 3/5*(3*np.pi/2)**(1/3.)
+                res = 3/5*(3*np.pi/2)**(2/3.)
             elif "ta-lin" in threshold:
-                res = 3/5*(3*np.pi/4)**(1/3.)
+                res = 3/5*(3*np.pi/4)**(2/3.)
             elif "ta-eul" in threshold:
                 res = 9*np.pi**2/16 - 1
             else:
                 raise ValueError(f'threshold definition {threshold} was not recognized options include:\n "EdS-cond", "EdS-coll", "EdS-ta-lin", "EdS-ta-eul", "LCDM-cond", "LCDM-coll", "LCDM-ta-lin", and "LCDM-ta-lin"')
         elif 'LCDM' in threshold:
-            zeta = self.get_zeta(self._scale_factor) 
+            t_c = self.time_of_a(self._scale_factor)
+            t_ta = t_c/2
+            a_ta = self.Newton_Raphson(f = lambda a: self.time_of_a(a) - t_ta, xi = 0.1, dx = 1e-6, tol = 1e-6)
+            zeta = self.get_zeta(a_ta) 
             if "cond" in threshold:
                 res = 9/10 * (2 * self.w(self._scale_factor))**(1/3)
             elif "coll" in threshold:
                 res = 3/5 * self.g(self._scale_factor) * (1 + zeta) * (self.w(self._scale_factor)/zeta)**(1./3.)
             elif "ta-lin" in threshold:
-                t_c = self.time_of_a(self._scale_factor)
-                t_ta = t_c/2
-                a_ta = self.Newton_Raphson(f = lambda a: self.time_of_a(a) - t_ta, xi = 0.1, dx = 1e-6, tol = 1e-6)
-                zeta_ta = self.get_zeta(a_ta)
-                res = 3/5 * self.g(a_ta) * (1 + zeta_ta) * (self.w(a_ta)/zeta_ta)**(1./3.)
+                res = 3/5 * self.g(a_ta) * (1 + zeta) * (self.w(a_ta)/zeta)**(1./3.)
             elif "ta-eul" in threshold:
                 res = self._Omega_L/self._Omega_m * self._scale_factor**3/zeta - 1
             else:
@@ -580,6 +582,10 @@ cdef class ParticleAssigner:
         #cdef double temp_xx, temp_xa
         #cdef int k
         #cdef double res
+        
+        indices = np.array(indices)
+        if indices.size == 1:
+            indices = np.array([indices.item(),])
         res = np.zeros(indices.size, dtype = 'f8')
         cond = np.zeros(indices.size, dtype = bool)#self.to_bool_array(self._computed)[indices]
         #if self._computed[i]:
@@ -596,6 +602,8 @@ cdef class ParticleAssigner:
                 temp_xa += x[k]*self.acc0[k]
             res[j] = self.pot[i] + temp_xa - self._long_range_fac * temp_xx
             #res = self._phi[i]
+        if res.size == 1:
+            return res.item()
         return res
     #####=================== Neighbours ==================
     
@@ -923,17 +931,23 @@ cdef class ParticleAssigner:
                     temp_xx += x[k]*x[k]
                 dist = np.sqrt(temp_xx)
                 if dist > r:
-                    raise RecursionError(f"The minimum is {float(dist):.3} (> {float(r):.3}) Mpc away from the starting position.\
-                                         \nThis may indicate that there is either no miminum or that you are starting index is too far away.")
+                    if self.verbose: print(f"The minimum is {float(dist):.3} (> {float(r):.3}) Mpc away from the starting position.\
+                                         \nThis may indicate that there is either no miminum or that you are starting index is too far away.", flush = True)
+                    self._too_far = True
+                    return -1
                 if counter > 1000:
-                    raise RecursionError("The minimum was not found after 1000 steps.\nThis may indicate that there is either no miminum or that you are starting index is too far away.")
+                    if self.verbose: print("The minimum was not found after 1000 steps.\nThis may indicate that there is either no miminum or that you are starting index is too far away.", flush = True)
+                    self._too_far = True
+                    return -1
         x = self.recentre_positions(self.pos[i], self.pos[i0])
         temp_xx = 0.0
         for k in range(len(x)):
              temp_xx += x[k]*x[k]
         if dist > r:
-            raise RecursionError(f"The minimum is {float(dist):.3} (> {float(r):.3}) Mpc away from the starting position.\
-                                  \nThis may indicate that there is either no miminum or that you are starting index is too far away.")
+            if self.verbose: print(f"The minimum is {float(dist):.3} (> {float(r):.3}) Mpc away from the starting position.\
+                                  \nThis may indicate that there is either no miminum or that you are starting index is too far away.", flush = True)
+            self._too_far = True
+            return -1
         return i
     
     cpdef long fof_minimum(self, long[:] ids_fof):
@@ -1523,10 +1537,10 @@ cdef class ParticleAssigner:
                 temp_vv += v[j]*v[j]
             
             
-            K[i] = 0.5 * temp_vv + self._scale_factor * self.H_a(self._scale_factor) * temp_xv
-            phi_p[i] = self._scale_factor**2 * self.phi_boost(index) + 0.5*(self._Omega_m/2 + 1)*self._H0**2* self._scale_factor**-1 * temp_xx # check scale factors in second term
-            #K[i] = 0.5 * temp_vv 
-            #phi_p[i] = self.phi_boost(i)
+            #K[i] = 0.5 * temp_vv + self._scale_factor * self.H_a(self._scale_factor) * temp_xv
+            #phi_p[i] = self._scale_factor**2 * self.phi_boost(index) + 0.5*(self._Omega_m/2 + 1)*self._H0**2* self._scale_factor**-1 * temp_xx # check scale factors in second term
+            K[i] = 0.5 * temp_vv 
+            phi_p[i] = self.phi_boost(index)
             E[i] = K[i] + phi_p[i] # <= Converted to physical potential
             if E[i] < phi_p_sad:
                 bound_mask[i] = True
@@ -1534,7 +1548,7 @@ cdef class ParticleAssigner:
         return bound_mask
 
     
-    cpdef segment(self, long i0, cnp.double_t[:] acc0, r = 1):
+    cpdef segment(self, long i0, cnp.double_t[:] acc0, cnp.double_t r = 1.):
         '''
         Main user function. Segments all particles belong to the same group as particle 'i0'. The boosted potential here is calculated with respect to the position of particle 'i0' and with the acceleration vector 'acc0'
         
@@ -1552,18 +1566,62 @@ cdef class ParticleAssigner:
         subs: (list of 3-ints) same properties as for the main output but given for all thesubgroups that have been found
         i_in: (set of ints) set of indices of all the particles contained in the structure
         '''
-        cdef long i_min, i_sad
+        cdef long i_min, i_sad, i0_fof, i0_temp, i0_itt
+        #cdef cpp_pq dist_queue
+        #cdef cpair[cnp.double_t, long] elem
+        cdef set mem = set()
+        cdef cbool min_found
         self.visited = np.zeros(self.pot.size, dtype = bool) # For now we just reset the list
         self.set_acc0(acc0)
         self.set_x0(self.pos[i0])
         
         self._current_group += 1
         self._current_subgroup = 0
-        # Verify that the minimum is not too far away.
+        # Verify that the first minimum is not too far away.
+        #============ Need to put this into a function ======
+        i0_itt = i0
+        min_found = False
+        
         if len(self.ids_fof) > 0:
-            i0 = self.fof_minimum(self.ids_fof)
+            i0_fof = self.fof_minimum(self.ids_fof)
+            i0_fof = self.first_minimum(i0_fof, r)
+            if i0_fof not in set(self.ids_fof) or self._too_far:
+                if self.verbose: print(f"The initial minimum is outside of the seed group falling back to standard approach.", flush = True)
+                if self._too_far: self._too_far = False
+                i0_temp = self.first_minimum(i0_itt, r)
+                if i0_temp not in set(self.ids_fof) or self._too_far:
+                    if self.verbose: print(f"The initial minimum is still outside of the seed group. Exiting", flush = True)
+                    return np.array([i0,]), i0, i0
+            else:
+                i0_itt = i0_fof
         else:
-            i0 = self.first_minimum(i0, r)
+            i0_itt = self.first_minimum(i0, r)
+        
+        self.set_x0(self.pos[i0_itt])
+        if i0_itt == self.first_minimum(i0_itt, r):
+            min_found = True
+            i0 = i0_itt
+                
+        while not min_found: # Itterate over first minimum to check that it is indeed a minimum in it's own reference frame
+            i0_temp = self.first_minimum(i0_itt, r)
+            if i0_temp == -1 or self._too_far:
+                return np.array([i0,]), i0, i0
+            else: i0_itt = i0_temp
+            if len(self.ids_fof) > 0: # If we have a fof seed make sure we don't leave the group through here.
+                if i0_itt not in set(self.ids_fof) or self._too_far:
+                    if self.verbose: print(f"The initial minimum is still outside of the seed group. Exiting", flush = True)
+                    return np.array([i0,]), i0, i0
+            
+            self.set_x0(self.pos[i0_itt])
+            if i0_itt == self.first_minimum(i0_itt, r): # This particle is the minimum in it's own refference frame.
+                min_found = True
+                i0 = i0_itt
+                
+            if i0_itt in mem: # If we end up here we're in a multiple particle loop
+                if self.verbose: print(f"Stuck in a loop finding first minimum.\n{mem}\n Exiting", flush = True)
+                return np.array([i0,]), i0, i0
+            mem.add(i0_itt) # Keep track of which particles have been visited to avoid getting stuck in a loop
+        # =======================================================    
         # Find all particles with potential lower than minimum (This should only give back 1 particle)
         self.set_x0(self.pos[i0])
         
