@@ -647,258 +647,6 @@ cdef class ParticleAssigner:
         self.ngbs = recip_ngbs
         return
     
-    #####=================== Sorting ==================
-    
-#     cpdef long secant_search(self, cnp.double_t elem, cnp.double_t[:] l):
-#         cdef int MAXIT = 30
-#         cdef int i = 0
-#         cdef long N = len(l) - 1
-#         cdef long x1 = N
-#         cdef long rts = 0
-#         cdef long x2 = rts
-#         cdef cnp.double_t f1 = l[x1] - elem
-#         cdef cnp.double_t f = l[x2] - elem
-#         cdef cnp.double_t f_temp = f
-#         cdef cnp.double_t dx = 0
-        
-#         if elem > l[-1]:
-#             return N+1
-#         if elem < l[0]:
-#             return 0
-
-#         if np.abs(f1) < np.abs(f):
-#             rts = x1
-#             x1 = x2
-#             f_temp = f; f = f1; f1 = f_temp
-#         else:
-#             x1 = x1
-#             rts = x2
-
-#         for i in range(MAXIT):
-            
-#             dx = (x1 - rts) * f/(f-f1)
-#             x1 = rts
-#             f1 = f
-#             rts += floor(dx)
-        
-#             if rts < 0: rts = 0
-#             if rts > N: rts = N
-#             f = l[rts] - elem
-#             if np.abs(dx) < 1 or f == 0 or (x1 - rts) == 0: return rts+1
-#             elif np.abs(floor(dx)) == 1: return x1 + 1
-#         raise ValueError("Root Finder failed to converge")
-#         return rts
-    
-#     cpdef long FP_search(self, cnp.double_t elem, cnp.double_t[:] l):
-#         cdef int MAXIT = 30
-#         cdef int i = 0
-#         cdef long N = len(l) - 1
-#         cdef long xl = 0
-#         cdef long x2 = N
-#         cdef long xh = x2
-#         cdef long dx = np.abs(xl - x2)
-#         cdef long DEL = 0
-#         cdef cnp.double_t fl = l[xl] - elem
-#         cdef cnp.double_t fh = l[xh] - elem
-#         cdef cnp.double_t f = 0.0
-#         cdef long rtf
-        
-        
-#         if N == 0:
-#             if elem < l[0]: return 0
-#             else: return 1
-#         if elem > l[-1]:
-#             return N+1
-#         if elem < l[0]:
-#             return 0
-
-#         dx = np.abs(xh - xl)
-#         for i in range(MAXIT):
-#             rtf = xl + floor(dx * fl/(fl - fh)) 
-#             f =  l[rtf] - elem 
-#             if f < 0.0:
-#                 DEL = xl - rtf
-#                 xl = rtf
-#                 fl = f
-#             else:
-#                 DEL = xh - rtf
-#                 xh = rtf
-#                 fh = f
-#             dx = xh - xl
-#             if np.abs(DEL) < 1 or f == 0.0 or (fl - fh) == 0.0 : return rtf + 1 
-#             elif np.abs(DEL) == 1: return xl + 1
-#         raise ValueError("Root Finder failed to converge")
-#         return rtf + 1
-    
-#     cpdef long binary_search(self, cnp.double_t elem, cnp.double_t[:] l):
-#         '''
-#         List binary argument search fuction. Finds the argument in the sorted array l which would be just below 'element' such that 'l[:arg] + [element,] + l[arg:]' would be a sorted list
-
-#         Parameters:
-#         ----------
-#         element: element we want to add to the array
-#         l: array sorted in increasing order
-
-#         Returns:
-#         ----------
-#         arg: (int) Argument of the largest element of l that is below 'element'
-#         '''
-#         #if not self.is_sorted(l): raise ValueError("The list provided is not sorted in increasing order.")
-        
-#         cdef int JMAX = 100
-#         cdef int j
-        
-#         cdef long N = len(l) - 1
-#         cdef long dx = N
-#         cdef long xmid = (N+1)//2
-#         cdef long rtb = 0
-#         cdef long rtt = N
-#         cdef cnp.double_t f = l[0] - elem
-#         cdef cnp.double_t fmid = l[N] - elem
-#         if elem > l[-1]:
-#             return N+1
-#         if elem < l[0]:
-#             return 0
-#         for j in range(JMAX):
-#             #print(fmid, xmid, dx)
-#             dx = (rtt - rtb)//2
-#             xmid = rtb + dx
-
-#             fmid = l[xmid] - elem
-#             if fmid <= 0.: rtb = xmid
-#             else: rtt = xmid
-#             if abs(dx) < 1 or fmid == 0.0: 
-#                 return rtb + 1
-
-#         raise ValueError("Root Finder failed to converge")
-#         return rtb + 1
-   
-#     cdef cnp.ndarray[long] unmix(self, cnp.ndarray[long] a, cnp.ndarray[long] order):
-#         cdef cnp.ndarray[long] a_new = np.zeros(len(a), dtype = long)
-#         for i,j in enumerate(order):
-#             a_new[j] = a[i]
-#         return a_new
-
-#     cpdef cbool is_sorted(self, cnp.double_t[:] a):
-#         '''
-#         Function checking if array a is sorted in ascending order
-        
-#         Parameters:
-#         ----------
-#         a: (array of float) array to check
-        
-#         Returns:
-#         ----------
-#         res: (bool) True is the array is ascending
-#         '''
-#         cdef long k
-#         for k in range(len(a)-1):
-#             if a[k+1] < a[k]:
-#                 return False
-#         return True 
-    
-#     cdef sort_surface(self, cnp.uint8_t[:] surface_mask):
-#         '''
-#         Function which sorts the particles in the set 'i_surf' in order of increasing potential
-        
-#         Parameters:
-#         ----------
-#         i_surf: (set of ints) set of particles which are direct neighbours of particles that are within the structure.
-        
-#         Returns:
-#         ----------
-#         id_surf: (array of ints) array of the sorted indices
-#         phi_surf: (array of floats) array of boosted potentials in the order of the indices
-#         '''
-        
-#         cdef cnp.ndarray[long, ndim = 1, cast = True] id_surf
-#         cdef cnp.ndarray[cnp.double_t, ndim = 1, cast = True] phi_surf 
-#         cdef cnp.ndarray[long, ndim = 1, cast = True] args
-#         cdef cnp.ndarray[long, ndim = 1, cast = True] indices
-#         cdef long ind, arg, j
-#         id_surf = np.where(surface_mask)[0]
-#         phi_surf = np.zeros(len(id_surf))
-#         for j in range(len(id_surf)):
-#             phi_surf[j] = self.phi_boost(id_surf[j])
-#         args = np.argsort(phi_surf)
-#         indices = np.zeros(args.size, dtype = 'i8')
-#         for j, arg in enumerate(args):
-#             indices[j] = id_surf[arg] 
-#         return id_surf, indices
-    
-#     cdef cnp.int64_t insert_mask_potential_sorted(self, long i, long[:] indices, long[:] ranks, cnp.uint8_t[:] mask, cnp.int64_t size):
-#         '''
-#        Function inserting the particle index i into the sorted list of indices l according the value of the boosted potetial. In the current implementation this function takes the array of boosted potentials to avoid needing to recompute it.
-        
-#         Parameters:
-#         ----------
-#         i: (int) index of the particle to add to the sorted list
-#         l: (array of int) list of particle indices according to their bosted potential
-#         phi_arr: (array of floats) list of boosted potentials of the particles in l
-        
-#         Returns:
-#         ----------
-#         l: (array of int) updated list of particle indices according to their bosted potential
-#         phi_arr: (array of floats) updated list of boosted potentials of the particles in l
-#         '''
-#         cdef long rank, j
-        
-#         if size == 0:
-#             indices[0] = i
-#             ranks[i] = 0
-#             mask[i] = True
-#             size +=1
-#             return size
-        
-#         cdef cnp.double_t[:] phi_arr
-        
-#         phi_arr = np.zeros(size)
-#         for j in range(size):
-#             phi_arr[j] = self.phi_boost(indices[j])
-       
-#         #if not self.is_sorted(phi_arr): phi_arr = np.sort(phi_arr) # This is a temporary fix... which slows the code a lot. Have to find where the ordering is lost
-#         rank = self.binary_search(self.phi_boost(i), phi_arr)
-#         #rank = self.secant_search(self.phi_boost(i), phi_arr)
-#         #rank = self.FP_search(self.phi_boost(i), phi_arr)
-#         for j in reversed(range(rank, size)):
-#             indices[j+1] = indices[j]
-#             ranks[indices[j+1]] += 1 
-#         size += 1
-#         indices[rank] = i
-#         ranks[i] = rank
-#         mask[i] = True
-#         return size
-    
-#     cdef cnp.int64_t remove_mask_potential_sorted(self, long i,  long[:] indices, long[:] ranks, cnp.uint8_t[:] mask, cnp.int64_t size):
-#         '''
-#         Function inserting the particle index i into the sorted list of indices l according the value of the boosted potetial. In the current implementation this function takes the array of boosted potentials to avoid needing to recompute it.
-        
-#         Parameters:
-#         ----------
-#         i: (int) index of the particle to add to the sorted list
-#         l: (array of int) list of particle indices according to their bosted potential
-#         phi_arr: (array of floats) list of boosted potentials of the particles in l
-        
-#         Returns:
-#         ----------
-#         l: (array of int) updated list of particle indices according to their bosted potential
-#         phi_arr: (array of floats) updated list of boosted potentials of the particles in l
-#         '''
-        
-        
-#         #if not self.is_sorted(phi_arr): phi_arr = np.sort(phi_arr) # This is a temporary fix... which slows the code a lot. Have to find where the ordering is lost
-#         cdef long rank, index, j 
-        
-#         rank = ranks[i]
-#         for j in range(rank, size):
-#             index = indices[j]
-#             ranks[index] -= 1
-#             indices[j] = indices[j+1]
-#         size -= 1
-#         ranks[i] = -1
-#         mask[i] = False
-#         return size
-    
     # ================== Particle Assignment ====================
     
     cpdef long first_minimum(self, long i0, double r = 1):
@@ -923,6 +671,7 @@ cdef class ParticleAssigner:
             phi_ngbs = np.zeros(len(ngbs_temp))
             for j in range(len(ngbs_temp)):
                 phi_ngbs[j] = self.phi_boost(ngbs_temp[j])
+                self._computed[j] = False
                 
             if counter % 100 == 0:
                 x = self.recentre_positions(self.pos[i], self.pos[i0])
@@ -957,9 +706,58 @@ cdef class ParticleAssigner:
         cdef cpp_pq loc_queue = cpp_pq(compare_first)
         for k in ids_fof:
             elem = (self.phi_boost(k), k)
+            self._computed[k] = False 
             loc_queue.push(elem)
         elem = loc_queue.top()
         return elem.second
+    
+    cpdef long itt_minimum(self, long i0, cnp.double_t r = 1.):
+        cdef long i0_itt = i0
+        cdef long i0_fof, i0_temp
+        cdef cbool min_found = False
+        cdef set mem = set()
+
+        if len(self.ids_fof) > 0:
+            i0_fof = self.fof_minimum(self.ids_fof)
+            i0_fof = self.first_minimum(i0_fof, r)
+            if i0_fof not in set(self.ids_fof) or self._too_far:
+                if self.verbose: print(f"The initial minimum is outside of the seed group falling back to standard approach.", flush = True)
+                if self._too_far: self._too_far = False
+                i0_temp = self.first_minimum(i0_itt, r)
+                if i0_temp not in set(self.ids_fof) or self._too_far:
+                    if self.verbose: print(f"The initial minimum is still outside of the seed group. Exiting", flush = True)
+                    return -1
+            else:
+                i0_itt = i0_fof
+        else:
+            i0_itt = self.first_minimum(i0, r)
+
+        self.set_x0(self.pos[i0_itt])
+        if i0_itt == self.first_minimum(i0_itt, r):
+            min_found = True
+            i0 = i0_itt
+
+        while not min_found: # Itterate over first minimum to check that it is indeed a minimum in it's own reference frame
+            i0_temp = self.first_minimum(i0_itt, r)
+            if i0_temp == -1 or self._too_far:
+                if self.verbose: print(f"Something went wrong itterating over minima. Exiting", flush = True)
+                return -1
+            else: i0_itt = i0_temp
+            if len(self.ids_fof) > 0: # If we have a fof seed make sure we don't leave the group through here.
+                if i0_itt not in set(self.ids_fof) or self._too_far:
+                    if self.verbose: print(f"The initial minimum is still outside of the seed group. Exiting", flush = True)
+                    return -1
+
+            self.set_x0(self.pos[i0_itt])
+            if i0_itt == self.first_minimum(i0_itt, r): # This particle is the minimum in it's own refference frame.
+                min_found = True
+                i0 = i0_itt
+
+            if i0_itt in mem: # If we end up here we're in a multiple particle loop
+                if self.verbose: print(f"Stuck in a loop finding first minimum.\n{mem}\n Exiting", flush = True)
+                return -1
+            mem.add(i0_itt) # Keep track of which particles have been visited to avoid getting stuck in a loop
+        return i0
     
     cpdef void fill_below(self, cnp.int64_t i):
         '''
@@ -1578,50 +1376,14 @@ cdef class ParticleAssigner:
         self._current_group += 1
         self._current_subgroup = 0
         # Verify that the first minimum is not too far away.
-        #============ Need to put this into a function ======
-        i0_itt = i0
-        min_found = False
+        
+        #i0 = self.itt_minimum(i0,r)
         
         if len(self.ids_fof) > 0:
-            i0_fof = self.fof_minimum(self.ids_fof)
-            i0_fof = self.first_minimum(i0_fof, r)
-            if i0_fof not in set(self.ids_fof) or self._too_far:
-                if self.verbose: print(f"The initial minimum is outside of the seed group falling back to standard approach.", flush = True)
-                if self._too_far: self._too_far = False
-                i0_temp = self.first_minimum(i0_itt, r)
-                if i0_temp not in set(self.ids_fof) or self._too_far:
-                    if self.verbose: print(f"The initial minimum is still outside of the seed group. Exiting", flush = True)
-                    return np.array([i0,]), i0, i0
-            else:
-                i0_itt = i0_fof
+            i0 = self.fof_minimum(self.ids_fof)
         else:
-            i0_itt = self.first_minimum(i0, r)
+            i0 = self.first_minimum(i0, r)
         
-        self.set_x0(self.pos[i0_itt])
-        if i0_itt == self.first_minimum(i0_itt, r):
-            min_found = True
-            i0 = i0_itt
-                
-        while not min_found: # Itterate over first minimum to check that it is indeed a minimum in it's own reference frame
-            i0_temp = self.first_minimum(i0_itt, r)
-            if i0_temp == -1 or self._too_far:
-                return np.array([i0,]), i0, i0
-            else: i0_itt = i0_temp
-            if len(self.ids_fof) > 0: # If we have a fof seed make sure we don't leave the group through here.
-                if i0_itt not in set(self.ids_fof) or self._too_far:
-                    if self.verbose: print(f"The initial minimum is still outside of the seed group. Exiting", flush = True)
-                    return np.array([i0,]), i0, i0
-            
-            self.set_x0(self.pos[i0_itt])
-            if i0_itt == self.first_minimum(i0_itt, r): # This particle is the minimum in it's own refference frame.
-                min_found = True
-                i0 = i0_itt
-                
-            if i0_itt in mem: # If we end up here we're in a multiple particle loop
-                if self.verbose: print(f"Stuck in a loop finding first minimum.\n{mem}\n Exiting", flush = True)
-                return np.array([i0,]), i0, i0
-            mem.add(i0_itt) # Keep track of which particles have been visited to avoid getting stuck in a loop
-        # =======================================================    
         # Find all particles with potential lower than minimum (This should only give back 1 particle)
         self.set_x0(self.pos[i0])
         
