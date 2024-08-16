@@ -1335,10 +1335,10 @@ cdef class ParticleAssigner:
                 temp_vv += v[j]*v[j]
             
             
-            #K[i] = 0.5 * temp_vv + self._scale_factor * self.H_a(self._scale_factor) * temp_xv
-            #phi_p[i] = self._scale_factor**2 * self.phi_boost(index) + 0.5*(self._Omega_m/2 + 1)*self._H0**2* self._scale_factor**-1 * temp_xx # check scale factors in second term
-            K[i] = 0.5 * temp_vv 
-            phi_p[i] = self.phi_boost(index)
+            K[i] = 0.5 * temp_vv + self._scale_factor * self.H_a(self._scale_factor) * temp_xv
+            phi_p[i] = self._scale_factor**2 * self.phi_boost(index) + 0.5*(self._Omega_m/2 + 1)*self._H0**2* self._scale_factor**-1 * temp_xx # check scale factors in second term
+            #K[i] = 0.5 * temp_vv 
+            #phi_p[i] = self.phi_boost(index)
             E[i] = K[i] + phi_p[i] # <= Converted to physical potential
             if E[i] < phi_p_sad:
                 bound_mask[i] = True
