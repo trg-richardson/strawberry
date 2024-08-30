@@ -153,7 +153,7 @@ cdef class ParticleAssigner:
     cdef cbool _too_far
         
     def __init__(self, cnp.ndarray[long, ndim = 2] ngbs, cnp.ndarray[double, ndim = 1] pot, cnp.ndarray[double, ndim = 2] pos, cnp.ndarray[double, ndim = 2] vel, 
-                 cnp.double_t scale_factor = 1., cnp.double_t Omega_m = 1., cnp.double_t Lbox = 1000., str threshold = 'EdS-cond',
+                 cnp.double_t scale_factor = 1., cnp.double_t Omega_m = 1., cnp.double_t Lbox = 1000., cnp.double_t H0 = 100, str threshold = 'EdS-cond',
                  no_binding = False, verbose = False, cnp.ndarray[long, ndim = 1] ids_fof = np.empty([0], dtype = 'i8'), cbool custom_delta = False,  cnp.double_t delta = 0.):
         
         self.nparts = ngbs.shape[0]
@@ -174,7 +174,7 @@ cdef class ParticleAssigner:
         self._Omega_L = 1. - Omega_m
         self._Omega_k = 0.
         self._scale_factor = scale_factor
-        self._H0 = 100. #In theory we should need to touch this
+        self._H0 = H0
         if custom_delta:
             self._delta_th = delta
         else:
@@ -1289,7 +1289,7 @@ cdef class ParticleAssigner:
         cdef cnp.double_t[:] K
         cdef cnp.double_t[:] E
         cdef cnp.uint8_t[:] bound_mask
-        cdef double phi_p_sad, temp_xx, temp_xv, temp_vv, factor_xx, factor_xv
+        cdef double phi_p_sad, temp_xx, temp_xv, temp_vv, factor_xx_K, factor_xx_phi, factor_xv
         cdef long i = 0
         cdef long index
         cdef int j = 0
@@ -1321,9 +1321,11 @@ cdef class ParticleAssigner:
             #temp_vx += v[j]*x[j]
             #temp_vv += v[j]*v[j]
             
-        factor_xx = 0.5*(self.Omega_m(self._scale_factor)/2 + 1)*self.H_a(self._scale_factor)**2 * self._scale_factor**2
+        factor_xx_K = 0.5*self.H_a(self._scale_factor)**2 * self._scale_factor**2
+        factor_xx_phi = 0.25*self.Omega_m(self._scale_factor)*self.H_a(self._scale_factor)**2 * self._scale_factor**2
         factor_xv = self._scale_factor * self.H_a(self._scale_factor)
-        phi_p_sad = self.phi_boost(i_sad) + factor_xx * temp_xx
+        phi_p_sad = self.phi_boost(i_sad) + factor_xx_phi * temp_xx
+        phi_p_min = self.phi_boost(i_min) #+ factor_xx_phi * temp_xx
         #phi_p_sad = self.phi_boost(i_sad)
         for i, index in enumerate(i_in_arr):
             x = self.recentre_positions(self.pos[index],self.pos[i_min])
@@ -1338,12 +1340,12 @@ cdef class ParticleAssigner:
                 temp_vv += v[j]*v[j]
             
             
-            K[i] = 0.5 * temp_vv + factor_xv * temp_xv
-            phi_p[i] = self.phi_boost(index) + factor_xx * temp_xx 
+            K[i] = 0.5 * temp_vv + factor_xv * temp_xv + factor_xx_K * temp_xx 
+            phi_p[i] = self.phi_boost(index) + factor_xx_phi * temp_xx 
             #K[i] = 0.5 * temp_vv 
             #phi_p[i] = self.phi_boost(index)
-            E[i] = K[i] + phi_p[i] # <= Converted to physical potential
-            if E[i] < phi_p_sad:
+            E[i] = K[i] + phi_p[i] - phi_p_min # <= Converted to physical potential
+            if E[i] < phi_p_sad - phi_p_min:
                 bound_mask[i] = True
         
         return bound_mask
