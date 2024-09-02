@@ -1321,16 +1321,16 @@ cdef class ParticleAssigner:
             #temp_vx += v[j]*x[j]
             #temp_vv += v[j]*v[j]
             
-        factor_xx_K = 0.5*self.H_a(self._scale_factor)**2 * self._scale_factor**2
-        factor_xx_phi = 0.25*self.Omega_m(self._scale_factor)*self.H_a(self._scale_factor)**2 * self._scale_factor**2
-        factor_xv = self._scale_factor * self.H_a(self._scale_factor)
+        factor_xx_K = 0.5*self.H_a(1.0)**2 * self._scale_factor**2
+        factor_xx_phi = 0.25*self.Omega_m(1.0)*self.H_a(1.0)**2 * self._scale_factor**2
+        factor_xv = self._scale_factor * self.H_a(1.0)
         phi_p_sad = self.phi_boost(i_sad) + factor_xx_phi * temp_xx
         phi_p_min = self.phi_boost(i_min) #+ factor_xx_phi * temp_xx
         #phi_p_sad = self.phi_boost(i_sad)
         for i, index in enumerate(i_in_arr):
             x = self.recentre_positions(self.pos[index],self.pos[i_min])
             for j in range(len(x)):
-                v[j] = v_in[i,j] - v_mean[j]
+                v[j] = self._scale_factor*(v_in[i,j] - v_mean[j])
             temp_xx = 0.0
             temp_xv = 0.0
             temp_vv = 0.0
