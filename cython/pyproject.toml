@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools", "wheel", "Cython", "numpy<2.0", "scipy"]
+
+[project]
+name = "strawberry-haloes"
+authors = [{name = "Tamara R. G. Richardson", email = "tamara.richardson@dipc.org"}]
+dependencies = [
+  "numpy<2.0",
+  "scipy"
+]
+readme = {file = "../README.txt", content-type = "text/markdown"}
+description = "Strawberry Halo Particle Assigner!"
+version = '0.1'
