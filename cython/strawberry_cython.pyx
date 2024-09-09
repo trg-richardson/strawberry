@@ -438,8 +438,18 @@ cdef class ParticleAssigner:
             elem = group_queue_copy.top()
             group_queue_copy.pop()
             res += [elem.second,]
-        return np.array(res)
+        return np.array(res, dtype = long)
     
+    cpdef cnp.ndarray[long, ndim = 1, cast = True] get_current_surface_particles(self):
+        cdef list res = []
+        cdef cpp_pq surface_queue_copy
+        cdef cpair[cnp.double_t, long] elem
+        surface_queue_copy = self.surface_queue
+        while not surface_queue_copy.empty():
+            elem = surface_queue_copy.top()
+            surface_queue_copy.pop()
+            res += [elem.second,]
+        return np.array(res, dtype = long)
     
     cpdef list get_subgroups(self, i):
         cdef list res
@@ -452,7 +462,7 @@ cdef class ParticleAssigner:
     
     
     #####=================== Boost!!! ===========================
-    def set_x0(self, x0):
+    cpdef void set_x0(self, cnp.double_t[:] x0):
         '''
         Function which sets 'x0' the reference position for the calculation of the boosted potential.
         
@@ -462,12 +472,22 @@ cdef class ParticleAssigner:
 
         '''
         self.x0 = x0
+        #if np.sum(self._computed) == 0:
+        #    return
         # Reset the cache values
-        self._computed = np.zeros(self.pot.size, dtype = bool)
-        self._phi = np.zeros(self.pot.size, dtype = 'f8') 
+        #cdef long n = self.pot.size
+        #self._phi = np.zeros(n, dtype = 'f8') 
+        #self._computed = np.zeros(n, dtype = bool)
+        cdef long[:] group_ids = self.get_current_group_particles()
+        cdef long[:] surface_ids = self.get_current_surface_particles()
+        cdef long[:] ids = np.hstack([group_ids,surface_ids])
+        cdef long i = 0
+        for i in ids:
+            self._phi[i] = 0.
+            self._computed[i] = False
         return
     
-    def set_acc0(self, acc0):
+    cpdef void set_acc0(self, cnp.double_t[:] acc0):
         '''
         Function which sets 'acc0' the reference acceleration for the calculation of the boosted potential.
         
@@ -477,9 +497,19 @@ cdef class ParticleAssigner:
 
         '''
         self.acc0 = acc0
+        #if np.sum(self._computed) == 0:
+        #    return
         # Reset the cache values
-        self._computed = np.zeros(self.pot.size, dtype = bool)
-        self._phi = np.zeros(self.pot.size, dtype = 'f8') 
+        #cdef long n = self.pot.size
+        #self._phi = np.zeros(n, dtype = 'f8') 
+        #self._computed = np.zeros(n, dtype = bool)
+        cdef long[:] group_ids = self.get_current_group_particles()
+        cdef long[:] surface_ids = self.get_current_surface_particles()
+        cdef long[:] ids = np.hstack([group_ids,surface_ids])
+        cdef long i
+        for i in ids:
+            self._phi[i] = 0.
+            self._computed[i] = False
         return
     
     def set_fof_ids(self, ids_fof):
@@ -1436,3 +1466,41 @@ cdef class ParticleAssigner:
         self.new_min = 3.4e38
         return
     
+    cpdef void reset_last_group(self):
+        self.x0 = None
+        self.acc0 = None
+        cdef long[:] group_ids = self.get_current_group_particles()
+        cdef long[:] surface_ids = self.get_current_surface_particles()
+        cdef long[:] ids = np.hstack([group_ids,surface_ids])
+        cdef long i
+        for i in ids:
+            self.visited[i] = False # We may want to review these assignements
+
+            self._computed[i] = False
+            self._phi[i] = 0
+            self.group[i] = 0
+            self.subgroup[i] = 0
+
+            self.group_mask[i] = False
+            self.surface_mask[i] = False
+
+            self.subgroup_mask[i] = False
+            self.subsurface_mask[i] = False
+            self.bound_mask[i] = False
+        
+        
+        self.surface_queue = cpp_pq(compare_first)
+        self.group_queue = cpp_pq(compare_first)
+        
+        self.subsurface_queue = cpp_pq(compare_first)
+        self.subgroup_queue = cpp_pq(compare_first)
+        
+        self._current_group = 0
+        self._current_subgroup = 0
+        self._current_group_size = 0
+        self._current_subgroup_size = 0
+        self._current_surface_size = 0
+        self._current_subsurface_size = 0
+        
+        self.new_min = 3.4e38
+        return
