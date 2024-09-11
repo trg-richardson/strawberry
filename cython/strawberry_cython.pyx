@@ -474,19 +474,17 @@ cdef class ParticleAssigner:
 
         '''
         self.x0 = x0
-        #if np.sum(self._computed) == 0:
-        #    return
-        # Reset the cache values
-        #cdef long n = self.pot.size
-        #self._phi = np.zeros(n, dtype = 'f8') 
-        #self._computed = np.zeros(n, dtype = bool)
-        cdef long[:] group_ids = self.get_current_group_particles()
-        cdef long[:] surface_ids = self.get_current_surface_particles()
-        cdef long[:] ids = np.hstack([group_ids,surface_ids])
-        cdef long i = 0
-        for i in ids:
+        cdef long i
+        cdef cpair[cnp.double_t, long] elem
+           
+        while not self._computed_queue.empty():
+            elem = self._computed_queue.top()
+            self._computed_queue.pop()
+            i = elem.second
             self._phi[i] = 0.
             self._computed[i] = False
+            
+        self._computed_queue = cpp_pq(compare_first)
         return
     
     cpdef void set_acc0(self, cnp.double_t[:] acc0):
@@ -495,23 +493,21 @@ cdef class ParticleAssigner:
         
         Parameters:
         ----------
-        x0: (array of d-floats) d-dimensional refference acceleration vector.
+        acc0: (array of d-floats) d-dimensional refference acceleration vector.
 
         '''
         self.acc0 = acc0
-        #if np.sum(self._computed) == 0:
-        #    return
-        # Reset the cache values
-        #cdef long n = self.pot.size
-        #self._phi = np.zeros(n, dtype = 'f8') 
-        #self._computed = np.zeros(n, dtype = bool)
-        cdef long[:] group_ids = self.get_current_group_particles()
-        cdef long[:] surface_ids = self.get_current_surface_particles()
-        cdef long[:] ids = np.hstack([group_ids,surface_ids])
         cdef long i
-        for i in ids:
+        cdef cpair[cnp.double_t, long] elem
+           
+        while not self._computed_queue.empty():
+            elem = self._computed_queue.top()
+            self._computed_queue.pop()
+            i = elem.second
             self._phi[i] = 0.
             self._computed[i] = False
+            
+        self._computed_queue = cpp_pq(compare_first)
         return
     
     def set_fof_ids(self, ids_fof):
@@ -701,16 +697,16 @@ cdef class ParticleAssigner:
         phi_ngbs = np.zeros(len(ngbs_temp))
         for j in range(len(ngbs_temp)):
             phi_ngbs[j] = self.phi_boost(ngbs_temp[j])
-            self._computed[j] = False
+
         while np.min(phi_ngbs) < self.phi_boost(i):
-            self._computed[i] = False
+
             counter += 1
             i = ngbs_temp[np.argmin(phi_ngbs)]
             ngbs_temp = self.ngbs[i]
             phi_ngbs = np.zeros(len(ngbs_temp))
             for j in range(len(ngbs_temp)):
                 phi_ngbs[j] = self.phi_boost(ngbs_temp[j])
-                self._computed[j] = False
+
                 
             if counter % 100 == 0:
                 x = self.recentre_positions(self.pos[i], self.pos[i0])
@@ -745,7 +741,7 @@ cdef class ParticleAssigner:
         cdef cpp_pq loc_queue = cpp_pq(compare_first)
         for k in ids_fof:
             elem = (self.phi_boost(k), k)
-            self._computed[k] = False 
+            
             loc_queue.push(elem)
         elem = loc_queue.top()
         return elem.second
@@ -1423,12 +1419,13 @@ cdef class ParticleAssigner:
         self._current_subgroup = 0
         # Verify that the first minimum is not too far away.
         
-        #i0 = self.itt_minimum(i0,r)
-        
-        if len(self.ids_fof) > 0:
-            i0 = self.fof_minimum(self.ids_fof)
-        else:
-            i0 = self.first_minimum(i0, r)
+        i0 = self.itt_minimum(i0,r)
+        if i0 == -1:
+            return np.array([], dtype = long), i0, i0
+        #if len(self.ids_fof) > 0:
+        #    i0 = self.fof_minimum(self.ids_fof)
+        #else:
+        #    i0 = self.first_minimum(i0, r)
         
         # Find all particles with potential lower than minimum (This should only give back 1 particle)
         self.set_x0(self.pos[i0])
