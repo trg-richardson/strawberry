@@ -115,6 +115,7 @@ cdef class ParticleAssigner:
     cdef cnp.uint8_t[:] visited
 
     cdef cnp.uint8_t[:] _computed
+    cdef cpp_pq _computed_queue
     cdef cnp.double_t[:] _phi 
     cdef cnp.int64_t[:] group
     cdef cnp.int64_t[:] subgroup
@@ -185,6 +186,7 @@ cdef class ParticleAssigner:
         self.visited = np.zeros(pot.size, dtype = bool) # We may want to review these assignements
         
         self._computed = np.zeros(pot.size, dtype = bool)
+        self._computed_queue = cpp_pq(compare_first)
         self._phi = np.zeros(pot.size, dtype = 'f8') 
         self.group = np.zeros(pot.size, dtype = 'i8')
         self.subgroup = np.zeros(pot.size, dtype = 'i8')
@@ -575,12 +577,13 @@ cdef class ParticleAssigner:
         cdef cnp.double_t temp_xx, temp_xa
         cdef int k
         cdef cnp.double_t res
+        cdef cpair[cnp.double_t, long] elem
         
         if self._computed[i]:
             res = self._phi[i]
         else:
             x = self.recentre_positions(self.pos[i,:],self.x0)
-            self._computed[i] = True
+            
             temp_xx = 0.0
             temp_xa = 0.0
             for k in range(len(x)):
@@ -588,6 +591,10 @@ cdef class ParticleAssigner:
                 temp_xa += x[k]*self.acc0[k]
             self._phi[i] = self.pot[i] + temp_xa - self._long_range_fac * temp_xx
             res = self._phi[i]
+            
+            self._computed[i] = True
+            elem = (res, i)
+            self._computed_queue.push(elem)
         return res
     
     def get_phi_boost(self, indices):
@@ -694,7 +701,9 @@ cdef class ParticleAssigner:
         phi_ngbs = np.zeros(len(ngbs_temp))
         for j in range(len(ngbs_temp)):
             phi_ngbs[j] = self.phi_boost(ngbs_temp[j])
+            self._computed[j] = False
         while np.min(phi_ngbs) < self.phi_boost(i):
+            self._computed[i] = False
             counter += 1
             i = ngbs_temp[np.argmin(phi_ngbs)]
             ngbs_temp = self.ngbs[i]
@@ -1141,6 +1150,7 @@ cdef class ParticleAssigner:
                 self._current_surface_size -= 1
                 self.surface_mask[i_cons] = False
                 self.visited[i_cons] = False
+                #self._computed[i_cons] = False
                 continue
             
             if_cond = True
@@ -1263,6 +1273,7 @@ cdef class ParticleAssigner:
                         qelem = self.subgroup_queue.top()
                         self.subgroup_queue.pop()
                         k = qelem.second
+                        phi_k = qelem.first
                         #print(f"sg {k} |", end= " ")
                         self.visited[k] = True
                         self.group[k] = self._current_group
@@ -1279,7 +1290,7 @@ cdef class ParticleAssigner:
                         dist = np.sqrt(temp_xx)
                         if dist > self.max_dist:
                             self.max_dist = dist
-                        phi_k = self.phi_boost(k)
+                        
                         # Keep min and max up to date
                         if phi_k < phi_min:
                             phi_min = phi_k
@@ -1466,18 +1477,11 @@ cdef class ParticleAssigner:
         self.new_min = 3.4e38
         return
     
-    cpdef void reset_last_group(self):
-        self.x0 = None
-        self.acc0 = None
-        cdef long[:] group_ids = self.get_current_group_particles()
-        cdef long[:] surface_ids = self.get_current_surface_particles()
-        cdef long[:] ids = np.hstack([group_ids,surface_ids])
-        cdef long i
-        for i in ids:
+    cdef void _reset_arrays(self, long i):
             self.visited[i] = False # We may want to review these assignements
 
             self._computed[i] = False
-            self._phi[i] = 0
+            self._phi[i] = 0.
             self.group[i] = 0
             self.subgroup[i] = 0
 
@@ -1486,12 +1490,28 @@ cdef class ParticleAssigner:
 
             self.subgroup_mask[i] = False
             self.subsurface_mask[i] = False
+            
             self.bound_mask[i] = False
-        
-        
+            return
+    
+    cpdef void reset_computed_particles(self):
+        self.x0 = None
+        self.acc0 = None
+        #cdef long[:] group_ids = self.get_current_group_particles()
+        #cdef long[:] surface_ids = self.get_current_surface_particles()
+        #cdef long[:] ids = np.hstack([group_ids,surface_ids])
+        cdef long i
+        cdef cpair[cnp.double_t, long] elem
+           
+        while not self._computed_queue.empty():
+            elem = self._computed_queue.top()
+            self._computed_queue.pop()
+            i = elem.second
+            self._reset_arrays(i)
+            
+        self._computed_queue = cpp_pq(compare_first)
         self.surface_queue = cpp_pq(compare_first)
         self.group_queue = cpp_pq(compare_first)
-        
         self.subsurface_queue = cpp_pq(compare_first)
         self.subgroup_queue = cpp_pq(compare_first)
         
