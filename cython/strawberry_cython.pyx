@@ -1194,8 +1194,8 @@ cdef class ParticleAssigner:
                 self.visited[i_cons] = False
                 self.new_min = phi_cons
                 
-                self.subgroup_mask = np.zeros(self.pot.size, dtype = bool)
-                self.subsurface_mask = np.zeros(self.pot.size, dtype = bool)
+                #self.subgroup_mask = np.zeros(self.pot.size, dtype = bool)     
+                #self.subsurface_mask = np.zeros(self.pot.size, dtype = bool)
                 self.subsurface_queue = cpp_pq(compare_first)
                 self.subgroup_queue = cpp_pq(compare_first)
                 self._current_subsurface_size = 0
@@ -1211,12 +1211,15 @@ cdef class ParticleAssigner:
                         self.subgroup_queue.pop()
                         k = qelem.second
                         self.visited[k] = False
+                        self.subgroup_mask[k] = False
+                        
                     
                     while not self.subsurface_queue.empty():
                         qelem = self.subsurface_queue.top()
                         self.subsurface_queue.pop()
                         k = qelem.second
                         self.visited[k] = False
+                        self.subsurface_mask[k] = False
                     self._too_far = False
                     break
                 
@@ -1250,6 +1253,7 @@ cdef class ParticleAssigner:
                         qelem = self.subsurface_queue.top()
                         self.subsurface_queue.pop()
                         k = qelem.second
+                        self.subsurface_mask[k] = False
                         #print(f"ss {k} |", end = " ")
                         if self.surface_mask[k] or self.visited[k]:
                             # Avoid duplicates or going back to a particle that has already been visited
@@ -1274,6 +1278,7 @@ cdef class ParticleAssigner:
                         self.visited[k] = True
                         self.group[k] = self._current_group
                         self.group_mask[k] = True
+                        self.subgroup_mask[k] = False
                         self._current_group_size += 1
                         self.group_queue.push(qelem)
                         
