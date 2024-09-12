@@ -1416,7 +1416,7 @@ cdef class ParticleAssigner:
         #cdef cpair[cnp.double_t, long] elem
         cdef set mem = set()
         cdef cbool min_found
-        self.visited = np.zeros(self.pot.size, dtype = bool) # For now we just reset the list
+        #self.visited = np.zeros(self.pot.size, dtype = bool) # For now we just reset the list
         self.set_acc0(acc0)
         self.set_x0(self.pos[i0])
         
@@ -1438,7 +1438,7 @@ cdef class ParticleAssigner:
         self.fill_below(i0)
         # Grow potential surface
         i_min, i_sad = self.grow()
-        self.visited = np.zeros(self.pot.size, dtype = bool) # For now we just reset the list
+        #self.visited = np.zeros(self.pot.size, dtype = bool) # For now we just reset the list
         #Binding check
         if self.no_binding: 
             return self.get_current_group_particles(), i_min, i_sad
