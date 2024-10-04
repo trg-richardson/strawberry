@@ -108,6 +108,8 @@ cdef class ParticleAssigner:
     cdef cnp.double_t _Omega_k
     cdef cnp.double_t _scale_factor
     cdef cnp.double_t _H0
+    cdef cnp.double_t _Ha
+    cdef cnp.double_t _Hd
     cdef cnp.double_t _delta_th
 
     cdef cnp.double_t[:] x0
@@ -176,6 +178,8 @@ cdef class ParticleAssigner:
         self._Omega_k = 0.
         self._scale_factor = scale_factor
         self._H0 = H0
+        self._Ha = self.H_a(self._scale_factor)
+        self._Hd = self.H_dot(self._scale_factor)
         if custom_delta:
             self._delta_th = delta
         else:
@@ -214,7 +218,7 @@ cdef class ParticleAssigner:
         self.new_min = 3.4e38 # this is just initialising the variable
         self._too_far = False
         # In spherical symetry to get threshold at <delta> we need delta' = 2pi*<delta> - 1
-        self._long_range_fac = 0.5 * (1 + (2*np.pi*self._delta_th - 1)) *self._Omega_m * self._scale_factor**2 * self._H0 * self._H0
+        self._long_range_fac = 0.5 * (1 + (2*np.pi*self._delta_th - 1)) *self._Omega_m * self._scale_factor**-1 * self._H0 * self._H0
         if verbose:
             print(f"long range factor: {self._long_range_fac}")
         self.max_dist = 1. # We should only realy be worried once structures start getting biger than 1 Mpc 
@@ -233,12 +237,18 @@ cdef class ParticleAssigner:
             self._Omega_k = 0.
         if scale_factor != None:
             self._scale_factor = scale_factor
+            self._Ha = self.H_a(scale_factor)
+            self._Hd = self.H_dot(scale_factor)
         self._delta_th = self.get_delta_th(self.threshold)
-        self._long_range_fac = 0.5 * (1 + (2*np.pi*self._delta_th - 1)) *self._Omega_m * self._scale_factor**2 * self._H0 * self._H0
+        self._long_range_fac = 0.5 * (1 + (2*np.pi*self._delta_th - 1)) *self._Omega_m * self._scale_factor**-1 * self._H0 * self._H0
+        self.reset_computed_particles()
         return 
     
     def H_a(self, a):
         return self._H0 * np.sqrt(self._Omega_m/a**(3)+self._Omega_k/a**(2)+self._Omega_L)
+
+    def H_dot(self, a):
+        return -self._H0 / 2 / np.sqrt(self._Omega_m/a**(3)+self._Omega_k/a**(2)+self._Omega_L) * (3*self._Omega_m/a**(4) + 2*self._Omega_k/a**(3))
         
     def D(self, a):
         f = lambda ap: (self._Omega_m*ap**(-1.) + self._Omega_L*ap**(2) + self._Omega_k)**(-3/2)
@@ -496,7 +506,10 @@ cdef class ParticleAssigner:
         acc0: (array of d-floats) d-dimensional refference acceleration vector.
 
         '''
-        self.acc0 = acc0
+        cdef int k
+        self.acc0 = np.zeros(len(acc0))
+        for k in range(len(acc0)):
+            self.acc0[k] =  acc0[k]
         cdef long i
         cdef cpair[cnp.double_t, long] elem
            
@@ -584,13 +597,65 @@ cdef class ParticleAssigner:
             temp_xa = 0.0
             for k in range(len(x)):
                 temp_xx += x[k]*x[k]
-                temp_xa += x[k]*self.acc0[k]
+                temp_xa += x[k]*self.acc0[k]*self._scale_factor
             self._phi[i] = self.pot[i] + temp_xa - self._long_range_fac * temp_xx
             res = self._phi[i]
             
             self._computed[i] = True
             elem = (res, i)
             self._computed_queue.push(elem)
+        return res
+
+    cdef cnp.double_t phi_boost_physical(self, long i, cnp.double_t[:] v_mean, cbool use_vel = True):
+        '''
+        Function which calculates the boosted potential at the position of particle i
+        
+        Parameters:
+        ----------
+        i: (int or array of ints) index/array of indices of the particles for which to calculate the boosted potential.
+        
+        Returns:
+        ----------
+        phi_boost: (float or array of floats) boosted potential of the requested particles
+        '''
+        
+        if self.x0 is None:
+            raise ValueError('A reference position x0 must be set first. This can be done by calling the set_x0 or segment methods.')
+        if self.acc0 is None:
+            raise ValueError('A reference acceleration acc0 must be set first. This can be done by calling the set_acc0 or segment methods.')
+            
+        cdef cnp.double_t[:] x
+        cdef cnp.double_t[:] v
+        cdef cnp.double_t[:] ap
+        cdef cnp.double_t temp_xx, temp_xa
+        cdef int k
+        cdef cnp.double_t res
+        cdef cpair[cnp.double_t, long] elem
+        
+        #if self._computed[i]:
+        #    res = self._phi[i]
+        #else:
+        x = self.recentre_positions(self.pos[i,:],self.x0)
+        v = np.zeros(len(self.vel[i,:]))
+        if use_vel:
+            for k in range(len(v)):
+                v[k] = self.vel[i,k] - v_mean[k]
+        ap = np.zeros(len(self.acc0))
+        
+        for k in range(len(x)):
+            ap[k] = self._Ha * v[k] + self._scale_factor * self.acc0[k]
+        
+        temp_xx = 0.0
+        temp_xa = 0.0
+        for k in range(len(x)):
+            temp_xx += x[k] * x[k]
+            temp_xa += x[k] * ap[k]
+        #self._phi[i] = self.pot[i] + temp_xa - self._long_range_fac * temp_xx
+        res = self.pot[i] + temp_xa - self._long_range_fac * temp_xx #self._phi[i]
+        
+        #self._computed[i] = True
+        #elem = (res, i)
+        #self._computed_queue.push(elem)
         return res
     
     def get_phi_boost(self, indices):
@@ -632,7 +697,7 @@ cdef class ParticleAssigner:
             temp_xa = 0.0
             for k in range(len(x)):
                 temp_xx += x[k]*x[k]
-                temp_xa += x[k]*self.acc0[k]
+                temp_xa += x[k]*self.acc0[k]*self._scale_factor
             res[j] = self.pot[i] + temp_xa - self._long_range_fac * temp_xx
             #res = self._phi[i]
         if res.size == 1:
@@ -1331,7 +1396,7 @@ cdef class ParticleAssigner:
         cdef cnp.double_t[:] K
         cdef cnp.double_t[:] E
         cdef cnp.uint8_t[:] bound_mask
-        cdef double phi_p_sad, temp_xx, temp_xv, temp_vv, factor_xx_K, factor_xx_phi, factor_xv
+        cdef double phi_p_sad, temp_xx, temp_xv, temp_vv, factor_xx_K, factor_xx_phi, factor_xv, sqrt_a
         cdef long i = 0
         cdef long index
         cdef int j = 0
@@ -1363,16 +1428,22 @@ cdef class ParticleAssigner:
             #temp_vx += v[j]*x[j]
             #temp_vv += v[j]*v[j]
             
-        factor_xx_K = 0.5*self.H_a(1.0)**2 * self._scale_factor**2
-        factor_xx_phi = 0.25*self.Omega_m(1.0)*self.H_a(1.0)**2 * self._scale_factor**2
-        factor_xv = self._scale_factor * self.H_a(1.0)
+        factor_xx_K = 0.5*self._Ha**2 * self._scale_factor**2
+        factor_xx_phi = 0.25*self.Omega_m(1.)*self._H0**2 / self._scale_factor
+        factor_xv = self._scale_factor * self._Ha
+        
+        # phi_p_sad = self.phi_boost_physical(i_sad, v_mean, use_vel = False) + factor_xx_phi * temp_xx
+        # phi_p_min = self.phi_boost_physical(i_min, v_mean, use_vel = False) #+ factor_xx_phi * temp_xx
+        
         phi_p_sad = self.phi_boost(i_sad) + factor_xx_phi * temp_xx
         phi_p_min = self.phi_boost(i_min) #+ factor_xx_phi * temp_xx
+        
+        sqrt_a = np.sqrt(self._scale_factor)
         #phi_p_sad = self.phi_boost(i_sad)
         for i, index in enumerate(i_in_arr):
             x = self.recentre_positions(self.pos[index],self.pos[i_min])
             for j in range(len(x)):
-                v[j] = self._scale_factor*(v_in[i,j] - v_mean[j])
+                v[j] = self._scale_factor * (v_in[i,j] - v_mean[j])
             temp_xx = 0.0
             temp_xv = 0.0
             temp_vv = 0.0
@@ -1383,6 +1454,7 @@ cdef class ParticleAssigner:
             
             
             K[i] = 0.5 * temp_vv + factor_xv * temp_xv + factor_xx_K * temp_xx 
+            #phi_p[i] = self.phi_boost_physical(index, v_mean) + factor_xx_phi * temp_xx 
             phi_p[i] = self.phi_boost(index) + factor_xx_phi * temp_xx 
             #K[i] = 0.5 * temp_vv 
             #phi_p[i] = self.phi_boost(index)
