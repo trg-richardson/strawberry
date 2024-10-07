@@ -107,6 +107,7 @@ cdef class ParticleAssigner:
     cdef cnp.double_t _Omega_L
     cdef cnp.double_t _Omega_k
     cdef cnp.double_t _scale_factor
+    cdef cnp.double_t _scale_factor3
     cdef cnp.double_t _H0
     cdef cnp.double_t _Ha
     cdef cnp.double_t _Hd
@@ -177,6 +178,7 @@ cdef class ParticleAssigner:
         self._Omega_L = 1. - Omega_m
         self._Omega_k = 0.
         self._scale_factor = scale_factor
+        self._scale_factor3 = scale_factor**(1/3.)
         self._H0 = H0
         self._Ha = self.H_a(self._scale_factor)
         self._Hd = self.H_dot(self._scale_factor)
@@ -237,6 +239,7 @@ cdef class ParticleAssigner:
             self._Omega_k = 0.
         if scale_factor != None:
             self._scale_factor = scale_factor
+            self._scale_factor3 = scale_factor**(1/3.)
             self._Ha = self.H_a(scale_factor)
             self._Hd = self.H_dot(scale_factor)
         self._delta_th = self.get_delta_th(self.threshold)
@@ -597,8 +600,8 @@ cdef class ParticleAssigner:
             temp_xa = 0.0
             for k in range(len(x)):
                 temp_xx += x[k]*x[k]
-                temp_xa += x[k]*self.acc0[k]*self._scale_factor
-            self._phi[i] = self.pot[i] + temp_xa - self._long_range_fac * temp_xx
+                temp_xa += x[k]*self.acc0[k]
+            self._phi[i] = self.pot[i]/self._scale_factor3 + temp_xa - self._long_range_fac * temp_xx
             res = self._phi[i]
             
             self._computed[i] = True
@@ -651,7 +654,7 @@ cdef class ParticleAssigner:
             temp_xx += x[k] * x[k]
             temp_xa += x[k] * ap[k]
         #self._phi[i] = self.pot[i] + temp_xa - self._long_range_fac * temp_xx
-        res = self.pot[i] + temp_xa - self._long_range_fac * temp_xx #self._phi[i]
+        res = self.pot[i]/self._scale_factor3  + temp_xa - self._long_range_fac * temp_xx #self._phi[i]
         
         #self._computed[i] = True
         #elem = (res, i)
