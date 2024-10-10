@@ -601,7 +601,9 @@ cdef class ParticleAssigner:
             for k in range(len(x)):
                 temp_xx += x[k]*x[k]
                 temp_xa += x[k]*self.acc0[k]
-            self._phi[i] = self.pot[i] * self._scale_factor * self._scale_factor + temp_xa - self._long_range_fac * temp_xx
+            self._phi[i] = self.pot[i] * self._scale_factor * self._scale_factor \
+                            + temp_xa * self._scale_factor * self._scale_factor \
+                            - self._long_range_fac * temp_xx  * self._scale_factor * self._scale_factor
             res = self._phi[i]
             
             self._computed[i] = True
@@ -609,7 +611,7 @@ cdef class ParticleAssigner:
             self._computed_queue.push(elem)
         return res
 
-    cdef cnp.double_t phi_boost_physical(self, long i, cnp.double_t[:] v_mean, cbool use_vel = True):
+    cdef cnp.double_t phi_boost_physical(self, long i):
         '''
         Function which calculates the boosted potential at the position of particle i
         
@@ -628,37 +630,24 @@ cdef class ParticleAssigner:
             raise ValueError('A reference acceleration acc0 must be set first. This can be done by calling the set_acc0 or segment methods.')
             
         cdef cnp.double_t[:] x
-        cdef cnp.double_t[:] v
-        cdef cnp.double_t[:] ap
         cdef cnp.double_t temp_xx, temp_xa
         cdef int k
         cdef cnp.double_t res
-        cdef cpair[cnp.double_t, long] elem
+        #cdef cpair[cnp.double_t, long] elem
         
         #if self._computed[i]:
         #    res = self._phi[i]
         #else:
         x = self.recentre_positions(self.pos[i,:],self.x0)
-        v = np.zeros(len(self.vel[i,:]))
-        if use_vel:
-            for k in range(len(v)):
-                v[k] = self.vel[i,k] - v_mean[k]
-        ap = np.zeros(len(self.acc0))
-        
-        for k in range(len(x)):
-            ap[k] = self._Ha * v[k] + self._scale_factor * self.acc0[k]
-        
+
         temp_xx = 0.0
         temp_xa = 0.0
         for k in range(len(x)):
             temp_xx += x[k] * x[k]
-            temp_xa += x[k] * ap[k]
-        #self._phi[i] = self.pot[i] + temp_xa - self._long_range_fac * temp_xx
-        res = self.pot[i]  * self._scale_factor * self._scale_factor  + temp_xa - self._long_range_fac * temp_xx #self._phi[i]
+            temp_xa += x[k] * self.acc0[k]
         
-        #self._computed[i] = True
-        #elem = (res, i)
-        #self._computed_queue.push(elem)
+        res = self.pot[i] * self._scale_factor * self._scale_factor  + temp_xa - self._long_range_fac * temp_xx * self._scale_factor * self._scale_factor 
+        
         return res
     
     def get_phi_boost(self, indices):
@@ -692,16 +681,17 @@ cdef class ParticleAssigner:
         #if self._computed[i]:
         #    res = self._phi[i]
         res[cond] = np.asarray(self._phi)[indices[cond]]
-        x = np.zeros(len(self.pos[0]))
+        #x = np.zeros(len(self.pos[0]))
         for j,i in enumerate(indices[np.logical_not(cond)]):
-            x = self.recentre_positions(self.pos[i,:],self.x0)
+            res[j] = self.phi_boost(i)
+            #x = self.recentre_positions(self.pos[i,:],self.x0)
             #self._computed[i] = True
-            temp_xx = 0.0
-            temp_xa = 0.0
-            for k in range(len(x)):
-                temp_xx += x[k]*x[k]
-                temp_xa += x[k]*self.acc0[k]
-            res[j] = self.pot[i] * self._scale_factor * self._scale_factor  + temp_xa - self._long_range_fac * temp_xx
+            #temp_xx = 0.0
+            #temp_xa = 0.0
+            #for k in range(len(x)):
+            #    temp_xx += x[k]*x[k]
+            #    temp_xa += x[k]*self.acc0[k]
+            #res[j] = self.pot[i] * self._scale_factor * self._scale_factor  + temp_xa - self._long_range_fac * temp_xx
             #res = self._phi[i]
         if res.size == 1:
             return res.item()
@@ -1446,7 +1436,7 @@ cdef class ParticleAssigner:
         for i, index in enumerate(i_in_arr):
             x = self.recentre_positions(self.pos[index],self.pos[i_min])
             for j in range(len(x)):
-                v[j] = (v_in[i,j] - v_mean[j]) # These should be peculiar velocities
+                v[j] = self._scale_factor*(v_in[i,j] - v_mean[j]) # These should be comoving velocities
             temp_xx = 0.0
             temp_xv = 0.0
             temp_vv = 0.0
