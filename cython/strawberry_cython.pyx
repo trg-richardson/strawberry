@@ -220,7 +220,7 @@ cdef class ParticleAssigner:
         self.new_min = 3.4e38 # this is just initialising the variable
         self._too_far = False
         # In spherical symetry to get threshold at <delta> we need delta' = 2pi*<delta> - 1
-        self._long_range_fac = 0.5 * (1 + (2*np.pi*self._delta_th - 1)) *self._Omega_m * self._scale_factor**-1 * self._H0 * self._H0
+        self._long_range_fac = 0.5 * (1 + (2*np.pi*self._delta_th - 1)) *self._Omega_m * self._scale_factor**-3 * self._H0 * self._H0
         if verbose:
             print(f"long range factor: {self._long_range_fac}")
         self.max_dist = 1. # We should only realy be worried once structures start getting biger than 1 Mpc 
@@ -243,7 +243,7 @@ cdef class ParticleAssigner:
             self._Ha = self.H_a(scale_factor)
             self._Hd = self.H_dot(scale_factor)
         self._delta_th = self.get_delta_th(self.threshold)
-        self._long_range_fac = 0.5 * (1 + (2*np.pi*self._delta_th - 1)) *self._Omega_m * self._scale_factor**-1 * self._H0 * self._H0
+        self._long_range_fac = 0.5 * (1 + (2*np.pi*self._delta_th - 1)) *self._Omega_m * self._scale_factor**-3 * self._H0 * self._H0
         self.reset_computed_particles()
         return 
     
