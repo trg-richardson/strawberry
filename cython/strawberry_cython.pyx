@@ -601,8 +601,8 @@ cdef class ParticleAssigner:
             for k in range(len(x)):
                 temp_xx += x[k]*x[k]
                 temp_xa += x[k]*self.acc0[k]
-            self._phi[i] = self.pot[i] * self._scale_factor * self._scale_factor \
-                            + temp_xa * self._scale_factor * self._scale_factor \
+            self._phi[i] = self.pot[i] / self._scale_factor \
+                            + temp_xa / self._scale_factor \
                             - self._long_range_fac * temp_xx  * self._scale_factor * self._scale_factor
             res = self._phi[i]
             
@@ -1436,7 +1436,7 @@ cdef class ParticleAssigner:
         for i, index in enumerate(i_in_arr):
             x = self.recentre_positions(self.pos[index],self.pos[i_min])
             for j in range(len(x)):
-                v[j] = self._scale_factor*(v_in[i,j] - v_mean[j]) # These should be comoving velocities
+                v[j] = (v_in[i,j] - v_mean[j]) # These should be comoving velocities
             temp_xx = 0.0
             temp_xv = 0.0
             temp_vv = 0.0
