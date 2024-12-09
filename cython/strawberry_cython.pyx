@@ -474,7 +474,8 @@ cdef class ParticleAssigner:
         res = [ids[subgroups == j] for j in range(0,int(np.max(subgroups))+1)]
         return res
 
-    
+    cpdef cnp.double_t get_long_range_fac(self):
+        return self._long_range_fac
     
     #####=================== Boost!!! ===========================
     cpdef void set_x0(self, cnp.double_t[:] x0):
