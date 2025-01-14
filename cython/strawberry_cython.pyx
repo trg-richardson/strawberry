@@ -1452,7 +1452,7 @@ cdef class ParticleAssigner:
             
             K[i] = 0.5 * temp_vv + factor_xv * temp_xv + factor_xx_K * temp_xx 
             #phi_p[i] = self.phi_boost_physical(index, v_mean) + factor_xx_phi * temp_xx 
-            phi_p[i] = self.phi_boost(index) + factor_xx_phi * temp_xx #+ self._long_range_fac * temp_xx * self._scale_factor * self._scale_factor
+            phi_p[i] = self.phi_boost(index) + factor_xx_phi * temp_xx + self._long_range_fac * temp_xx * self._scale_factor * self._scale_factor
             #K[i] = 0.5 * temp_vv 
             #phi_p[i] = self.phi_boost(index)
             E[i] = K[i] + phi_p[i] - phi_p_min # <= Converted to physical potential
