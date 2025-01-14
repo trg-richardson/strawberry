@@ -113,6 +113,7 @@ cdef class ParticleAssigner:
     cdef cnp.double_t _Hd
     cdef cnp.double_t _delta_th
 
+    cdef long i0
     cdef cnp.double_t[:] x0
     cdef cnp.double_t[:] acc0
     cdef cnp.uint8_t[:] visited
@@ -186,7 +187,7 @@ cdef class ParticleAssigner:
             self._delta_th = delta
         else:
             self._delta_th = self.get_delta_th(threshold)
-        
+        self.i0 = -1
         self.x0 = None
         self.acc0 = None
         self.visited = np.zeros(pot.size, dtype = bool) # We may want to review these assignements
@@ -243,7 +244,7 @@ cdef class ParticleAssigner:
             self._Ha = self.H_a(scale_factor)
             self._Hd = self.H_dot(scale_factor)
         self._delta_th = self.get_delta_th(self.threshold)
-        self._long_range_fac = 0.5 * (1 + (2*np.pi*self._delta_th - 1)) *self._Omega_m * self._scale_factor**-3 * self._H0 * self._H0
+        self._long_range_fac = 0.25 * np.pi * self._delta_th * self._Omega_m * self._scale_factor**-3 * self._H0 * self._H0
         self.reset_computed_particles()
         return 
     
@@ -353,6 +354,7 @@ cdef class ParticleAssigner:
             elif "ta-lin" in threshold:
                 res = 3/5 * self.g(a_ta) * (1 + zeta) * (self.w(a_ta)/zeta)**(1./3.)
             elif "ta-eul" in threshold:
+                zeta = self.get_zeta(self._scale_factor) 
                 res = self._Omega_L/self._Omega_m * self._scale_factor**3/zeta - 1
             else:
                 raise ValueError(f'threshold definition {threshold} was not recognized options include:\n "EdS-cond", "EdS-coll", "EdS-ta-lin", "EdS-ta-eul", "LCDM-cond", "LCDM-coll", "LCDM-ta-lin", and "LCDM-ta-lin"')
@@ -478,7 +480,7 @@ cdef class ParticleAssigner:
         return self._long_range_fac
     
     #####=================== Boost!!! ===========================
-    cpdef void set_x0(self, cnp.double_t[:] x0):
+    cpdef void set_x0(self, long i0, cnp.double_t[:] x0):
         '''
         Function which sets 'x0' the reference position for the calculation of the boosted potential.
         
@@ -487,6 +489,7 @@ cdef class ParticleAssigner:
         x0: (array of d-floats) d-dimensional refference position vector.
 
         '''
+        self.i0 = i0
         self.x0 = x0
         cdef long i
         cdef cpair[cnp.double_t, long] elem
@@ -602,7 +605,7 @@ cdef class ParticleAssigner:
             for k in range(len(x)):
                 temp_xx += x[k]*x[k]
                 temp_xa += x[k]*self.acc0[k]
-            self._phi[i] = self.pot[i] / self._scale_factor \
+            self._phi[i] = (self.pot[i] - self.pot[self.i0]) / self._scale_factor \
                             + temp_xa / self._scale_factor \
                             - self._long_range_fac * temp_xx  * self._scale_factor * self._scale_factor
             res = self._phi[i]
@@ -826,7 +829,7 @@ cdef class ParticleAssigner:
         else:
             i0_itt = self.first_minimum(i0, r)
 
-        self.set_x0(self.pos[i0_itt])
+        self.set_x0(i0_itt, self.pos[i0_itt])
         if i0_itt == self.first_minimum(i0_itt, r):
             min_found = True
             i0 = i0_itt
@@ -842,7 +845,7 @@ cdef class ParticleAssigner:
                     if self.verbose: print(f"The initial minimum is still outside of the seed group. Exiting", flush = True)
                     return -1
 
-            self.set_x0(self.pos[i0_itt])
+            self.set_x0(i0_itt, self.pos[i0_itt])
             if i0_itt == self.first_minimum(i0_itt, r): # This particle is the minimum in it's own refference frame.
                 min_found = True
                 i0 = i0_itt
@@ -1449,7 +1452,7 @@ cdef class ParticleAssigner:
             
             K[i] = 0.5 * temp_vv + factor_xv * temp_xv + factor_xx_K * temp_xx 
             #phi_p[i] = self.phi_boost_physical(index, v_mean) + factor_xx_phi * temp_xx 
-            phi_p[i] = self.phi_boost(index) + factor_xx_phi * temp_xx 
+            phi_p[i] = self.phi_boost(index) + factor_xx_phi * temp_xx + self._long_range_fac * temp_xx * self._scale_factor * self._scale_factor
             #K[i] = 0.5 * temp_vv 
             #phi_p[i] = self.phi_boost(index)
             E[i] = K[i] + phi_p[i] - phi_p_min # <= Converted to physical potential
@@ -1484,7 +1487,7 @@ cdef class ParticleAssigner:
         cdef cbool min_found
         #self.visited = np.zeros(self.pot.size, dtype = bool) # For now we just reset the list
         self.set_acc0(acc0)
-        self.set_x0(self.pos[i0])
+        self.set_x0(i0, self.pos[i0])
         
         self._current_group += 1
         self._current_subgroup = 0
@@ -1499,8 +1502,8 @@ cdef class ParticleAssigner:
         #    i0 = self.first_minimum(i0, r)
         
         # Find all particles with potential lower than minimum (This should only give back 1 particle)
-        self.set_x0(self.pos[i0])
-        
+        self.set_x0(i0, self.pos[i0])
+ 
         self.fill_below(i0)
         # Grow potential surface
         i_min, i_sad = self.grow()
@@ -1512,6 +1515,7 @@ cdef class ParticleAssigner:
         return self.get_current_group_particles()[bound_mask], i_min, i_sad # output: i_min, i_sad, n_part(, subs, i_in)
     
     cpdef void reset(self):
+        self.i0 = -1
         self.x0 = None
         self.acc0 = None
         self.visited = np.zeros(self.pot.size, dtype = bool) # We may want to review these assignements
@@ -1563,6 +1567,7 @@ cdef class ParticleAssigner:
             return
     
     cpdef void reset_computed_particles(self):
+        self.i0 = -1
         self.x0 = None
         self.acc0 = None
         #cdef long[:] group_ids = self.get_current_group_particles()
