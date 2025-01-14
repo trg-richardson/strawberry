@@ -221,7 +221,7 @@ cdef class ParticleAssigner:
         self.new_min = 3.4e38 # this is just initialising the variable
         self._too_far = False
         # In spherical symetry to get threshold at <delta> we need delta' = 2pi*<delta> - 1
-        self._long_range_fac = 0.5 * (1 + (2*np.pi*self._delta_th - 1)) *self._Omega_m * self._scale_factor**-3 * self._H0 * self._H0
+        self._long_range_fac =  0.25 * np.pi * self._delta_th *self._Omega_m * self._scale_factor**-3 * self._H0 * self._H0
         if verbose:
             print(f"long range factor: {self._long_range_fac}")
         self.max_dist = 1. # We should only realy be worried once structures start getting biger than 1 Mpc 
@@ -1452,7 +1452,7 @@ cdef class ParticleAssigner:
             
             K[i] = 0.5 * temp_vv + factor_xv * temp_xv + factor_xx_K * temp_xx 
             #phi_p[i] = self.phi_boost_physical(index, v_mean) + factor_xx_phi * temp_xx 
-            phi_p[i] = self.phi_boost(index) + factor_xx_phi * temp_xx + self._long_range_fac * temp_xx * self._scale_factor * self._scale_factor
+            phi_p[i] = self.phi_boost(index) + factor_xx_phi * temp_xx #+ self._long_range_fac * temp_xx * self._scale_factor * self._scale_factor
             #K[i] = 0.5 * temp_vv 
             #phi_p[i] = self.phi_boost(index)
             E[i] = K[i] + phi_p[i] - phi_p_min # <= Converted to physical potential
