@@ -1,11 +1,11 @@
 [build-system]
-requires = ["setuptools", "wheel", "Cython", "numpy<2.0", "scipy"]
+requires = ["setuptools", "wheel", "Cython", "numpy", "scipy"]
 
 [project]
 name = "strawberry-haloes"
 authors = [{name = "Tamara R. G. Richardson", email = "tamara.richardson@dipc.org"}]
 dependencies = [
-  "numpy<2.0",
+  "numpy",
   "scipy"
 ]
 readme = {file = "../README.txt", content-type = "text/markdown"}

@@ -221,7 +221,7 @@ cdef class ParticleAssigner:
         self.new_min = 3.4e38 # this is just initialising the variable
         self._too_far = False
         # In spherical symetry to get threshold at <delta> we need delta' = 2pi*<delta> - 1
-        self._long_range_fac =  0.25 * np.pi * self._delta_th *self._Omega_m * self._scale_factor**-3 * self._H0 * self._H0
+        self._long_range_fac =  0.25 * self._delta_th *self._Omega_m * self._scale_factor**-3 * self._H0 * self._H0
         if verbose:
             print(f"long range factor: {self._long_range_fac}")
         self.max_dist = 1. # We should only realy be worried once structures start getting biger than 1 Mpc 
@@ -244,7 +244,7 @@ cdef class ParticleAssigner:
             self._Ha = self.H_a(scale_factor)
             self._Hd = self.H_dot(scale_factor)
         self._delta_th = self.get_delta_th(self.threshold)
-        self._long_range_fac = 0.25 * np.pi * self._delta_th * self._Omega_m * self._scale_factor**-3 * self._H0 * self._H0
+        self._long_range_fac = 0.25 * self._delta_th * self._Omega_m * self._scale_factor**-3 * self._H0 * self._H0
         self.reset_computed_particles()
         return 
     
@@ -1288,6 +1288,40 @@ cdef class ParticleAssigner:
                 if self.new_min <= phi_min:
                     # Moved into a lower potential well => exit
                     if self.verbose: print('Found lower minimum:', self._current_subgroup_size, i_cons, end = ' ', flush = True)
+                    # Make saddle point a part of the main group
+                    # Tag i_cons as part of the main group
+                    
+                    self.group[i_cons] = self._current_group
+                    self.group_mask[i_cons] = True
+                    self._current_group_size += 1
+                    qelem = (phi_cons, i_cons)
+                    self.group_queue.push(qelem)
+                    
+                    # Remove it from the surface
+                    self.surface_queue.pop()
+                    self._current_surface_size -= 1
+                    self.surface_mask[i_cons] = False
+                    
+                    if phi_cons < phi_min:
+                        phi_min = phi_cons
+                        i_min = i_cons
+                    if phi_cons > phi_max:
+                        phi_max = phi_cons
+                        i_max = i_cons
+                        
+                    # For completeness add it's neighbours to the surface.
+                    for k in ngbs_temp:
+                        if self.surface_mask[k] or self.visited[k]:
+                            # Avoid duplicates or going back to a particle that has already been visited
+                            continue
+                        else:
+                        
+                            # Insert particle in sorted order
+                            self.surface_mask[k] = True
+                            qelem = (self.phi_boost(k), k)
+                            self.surface_queue.push(qelem)
+                            self._current_surface_size += 1
+                    
                     while not self.subgroup_queue.empty():
                         qelem = self.subgroup_queue.top()
                         self.subgroup_queue.pop()
@@ -1426,7 +1460,7 @@ cdef class ParticleAssigner:
             #temp_vv += v[j]*v[j]
             
         factor_xx_K = 0.5*self._Ha**2 * self._scale_factor*self._scale_factor
-        factor_xx_phi = 0.25*self.Omega_m(1.)*self._H0**2 / self._scale_factor
+        factor_xx_phi = 0.25*self._H0**2 * (self._Omega_m / self._scale_factor - 2 * self._Omega_L * self._scale_factor*self._scale_factor)
         factor_xv = self._scale_factor * self._Ha
         
         # phi_p_sad = self.phi_boost_physical(i_sad, v_mean, use_vel = False) + factor_xx_phi * temp_xx
