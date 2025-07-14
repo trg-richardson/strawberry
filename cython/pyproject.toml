@@ -10,4 +10,4 @@ dependencies = [
 ]
 readme = {file = "../README.txt", content-type = "text/markdown"}
 description = "Strawberry Halo Particle Assigner!"
-version = '0.1'
+version = '0.2'
