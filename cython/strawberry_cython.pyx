@@ -38,6 +38,7 @@ cpdef void test_queue(cnp.ndarray[long, ndim = 1] indices, cnp.ndarray[cnp.doubl
         print("The copy is deep")
     return 
 
+
 cdef class ParticleAssigner:
     '''
     ParticleAssigner class. This class is designed to assign particles to a structure given a potential surface and local acceleration defining the boosted potential (for details see: https://arxiv.org/abs/2107.13008). 
