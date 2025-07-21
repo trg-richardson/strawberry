@@ -79,6 +79,274 @@ cdef class Tracker:
             res += [elem.second,]
         return np.array(res, dtype = 'i8')
 
+cdef class Halo:
+    cdef long nparts
+    
+    cdef long i0
+    cdef long i_min
+    cdef long i_max
+    
+    cdef cnp.double_t[:] x0
+    cdef cnp.double_t[:] acc0
+    cdef cnp.uint8_t[:] visited
+
+    cdef cnp.double_t max_dist
+    cdef cnp.double_t new_min
+    
+    cdef long[:] ids_fof
+    
+    cdef Tracker computed_tracker
+    cdef Tracker group_tracker
+    cdef Tracker subgroup_tracker
+    cdef Tracker surface_tracker
+    cdef Tracker subsurface_tracker
+    cdef cnp.uint8_t[:] bound_mask
+    cdef cnp.int64_t _current_group
+    cdef cnp.int64_t _current_subgroup
+    cdef cnp.double_t[:] _phi
+    
+    cdef list subgroups
+    cdef cbool _too_far
+
+    def __init__(self, long nparts, cnp.ndarray[long, ndim = 1] ids_fof = np.empty([0], dtype = 'i8')):
+        
+        self.nparts = nparts
+        self.computed_tracker = Tracker(self.nparts)
+        self.group_tracker = Tracker(self.nparts)
+        self.subgroup_tracker = Tracker(self.nparts)
+        self.surface_tracker = Tracker(self.nparts)
+        self.subsurface_tracker = Tracker(self.nparts)
+        
+        self.ids_fof = ids_fof
+        
+        #self.bound_mask = np.zeros(pot.size, dtype = bool)
+        
+        self._current_group = 0
+        self._current_subgroup = 0
+
+        self.i0 = -1
+        self.x0 = None
+        self.acc0 = None
+        self.visited = np.zeros(self.nparts, dtype = bool) # We may want to review these assignements
+        self._phi = np.zeros(self.nparts, dtype = 'f8')
+        self.subgroups = []
+        self.max_dist = 1. 
+        # We should only realy be worried once structures start getting biger than 1 Mpc.
+        # Note that this is a first guess and is changed adaptively to accomodate larger objects.
+        self.new_min = 3.4e38
+        self._too_far= False
+
+        self.i_min = -1
+        self.i_max = -1
+        return
+    
+    cpdef void reset(self):
+        '''
+        Method to operate a full reset of internal variables. This can be quite slow for large simulations. In this case prefer, reset_computed_particles.
+        '''
+        # Operates a full reset of all the internal arrays and structures. Can be a bit slow for large simulations
+        self.i0 = -1
+        self.x0 = None
+        self.acc0 = None
+        self.visited = np.zeros(self.nparts, dtype = bool) # We may want to review these assignements
+        self._phi = np.zeros(self.nparts, dtype = 'f8') 
+        # self._computed = np.zeros(self.pot.size, dtype = bool)
+        # self._phi = np.zeros(self.pot.size, dtype = 'f8') 
+        # self.group = np.zeros(self.pot.size, dtype = 'i8')
+        # self.subgroup = np.zeros(self.pot.size, dtype = 'i8')
+        self.computed_tracker = Tracker(self.nparts)
+        self.group_tracker = Tracker(self.nparts)
+        self.subgroup_tracker = Tracker(self.nparts)
+        self.surface_tracker = Tracker(self.nparts)
+        self.subsurface_tracker = Tracker(self.nparts)
+        
+        #self.bound_mask = np.zeros(self.pot.size, dtype = bool)
+        
+        self._current_group = 0
+        self._current_subgroup = 0
+        
+        self.new_min = 3.4e38
+        self.subgroups = []
+        self._too_far= False
+        self.i_min = -1
+        self.i_max = -1
+        return
+    cdef void gone_too_far(self):
+        self._too_far = True
+        return
+    
+    cdef void not_too_far(self):
+        self._too_far = False
+        return 
+    
+    cdef cbool is_too_far(self):
+        return self._too_far
+    
+    cdef void _reset_arrays(self, long i):
+        '''
+        Method to reset the internal values for a single particle.
+        This method is dangerous as it does not respect the order of the _computed_queue priority queue.
+        Do not use unless stricly respecting this ordering.
+        '''
+        self.visited[i] = False # We may want to review these assignements
+
+        # self._computed[i] = False
+        self._phi[i] = 0.
+        # self.group[i] = 0
+        # self.subgroup[i] = 0
+        
+        #self.bound_mask[i] = False
+        return
+    
+    cpdef void reset_computed_particles(self):
+        '''
+        Method that reset all the internal values for all particles that have a computed boosted potentials and resets all internal trackers. Faster than reset but can be exposed to issues if the tracking is tampered.
+        '''
+        # Only resets particles that for which phi_boost has been computed at least once.
+        # self.i0 = -1
+        # self.x0 = None
+        # self.acc0 = None
+
+        cdef long i
+        cdef cpair[cnp.double_t, long] elem
+
+        while not self.computed_tracker.is_empty():
+            elem = self.computed_tracker.get_top_elem()
+            self.computed_tracker.remove_top_elem()
+            i = elem.second
+            self._reset_arrays(i)
+        #self.visited = np.zeros(self.nparts, dtype = bool)
+        #self.computed_tracker.reset()
+        self.group_tracker.reset()
+        self.subgroup_tracker.reset()
+        self.surface_tracker.reset()
+        self.subsurface_tracker.reset()
+        
+        self._current_group = 0
+        self._current_subgroup = 0
+
+        self.new_min = 3.4e38
+        self.subgroups = []
+        self._too_far= False
+        self.i_min = -1
+        self.i_max = -1
+        return
+    
+    
+    cpdef void set_x0(self, long i0, cnp.double_t[:] x0):
+        '''
+        Function which sets 'x0' the reference position for the calculation of the boosted potential.
+        
+        Parameters:
+        ----------
+        x0: (array of d-floats) d-dimensional refference position vector.
+
+        '''
+        self.i0 = i0
+        self.x0 = x0
+        #cdef long i
+        #cdef cpair[cnp.double_t, long] elem
+           
+        self.reset_computed_particles()
+        return
+
+    cpdef long get_i0(self):
+        return self.i0
+    
+    cpdef cnp.ndarray[cnp.float64_t, ndim = 1, cast = True] get_x0(self):
+        return np.asarray(self.x0)
+    
+    cpdef cnp.ndarray[cnp.float64_t, ndim = 1, cast = True] get_acc0(self):
+        return np.asarray(self.acc0)
+    
+    cpdef void set_acc0(self, cnp.double_t[:] acc0):
+        '''
+        Function which sets 'acc0' the reference acceleration for the calculation of the boosted potential.
+        
+        Parameters:
+        ----------
+        acc0: (array of d-floats) d-dimensional refference acceleration vector.
+
+        '''
+        cdef int k
+        self.acc0 = np.zeros(len(acc0))
+        for k in range(len(acc0)):
+            self.acc0[k] =  acc0[k]
+        #cdef long i
+        #cdef cpair[cnp.double_t, long] elem
+           
+        self.reset_computed_particles()
+        return
+    
+    cpdef set_fof_ids(self, ids_fof):
+        '''
+        Function which sets 'ids_fof' the ids of a precomputed group (not necesarrily FoF) used to find the first minimum of the boosted potential.
+        
+        Parameters:
+        ----------
+        x0: (array of d-floats) d-dimensional refference acceleration vector.
+
+        '''
+        self.ids_fof = ids_fof 
+        return
+
+    
+    def to_bool_array(self, lst):
+        cdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast=True] res
+        res = np.array(lst, dtype=bool)
+        return res
+        
+    cpdef void set_current_group(self, long i):
+        self._current_group = i
+        return
+    
+    # cpdef cnp.ndarray[long, ndim = 1, cast = True] get_group_ledger(self):
+    #     cdef cnp.ndarray[long, ndim = 1, cast = True] res = np.asarray(self.group)
+    #     return res
+    
+    # cpdef cnp.ndarray[long, ndim = 1, cast = True] get_subgroup_ledger(self):
+    #     cdef cnp.ndarray[long, ndim = 1, cast = True] res = np.asarray(self.subgroup)
+    #     return res
+    
+    cpdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] get_visited(self):
+        cdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] res = self.to_bool_array(self.visited)
+        return res
+
+    cpdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] get_group_mask(self):
+        cdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] res = self.to_bool_array(self.group_tracker.get_mask())
+        return res
+    
+    cpdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] get_surface_mask(self):
+        cdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] res = self.to_bool_array(self.surface_tracker.get_mask())
+        return res
+    
+    cpdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] get_subsurface_mask(self):
+        cdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] res = self.to_bool_array(self.subsurface_tracker.get_mask())
+        return res
+    
+    cpdef cnp.ndarray[long, ndim = 1, cast = True] get_group_particles(self, i):
+        cdef cnp.ndarray[long, ndim = 1, cast = True] res = np.where(np.asarray(self.group) == i)[0]
+        return res
+    
+    cpdef cnp.ndarray[long, ndim = 1, cast = True] get_current_group_particles(self):
+        return self.group_tracker.get_particles()
+    
+    cpdef cnp.ndarray[long, ndim = 1, cast = True] get_current_surface_particles(self):
+        return self.surface_tracker.get_particles()
+
+    cpdef list get_subgroups(self):
+        return self.subgroups
+
+    cpdef cnp.ndarray[long, ndim = 1, cast = True] get_bound_mask(self):
+        return self.to_bool_array(self.bound_mask)
+    # cpdef list get_subgroups(self, i):
+    #     cdef list res
+    #     cdef cnp.ndarray[long, ndim = 1, cast = True] ids = self.get_group_particles(i)
+    #     cdef cnp.ndarray[long, ndim = 1, cast = True] subgroups = self.get_subgroup_ledger()[ids]
+    #     cdef long index, j
+    #     res = [ids[subgroups == j] for j in range(0,int(np.max(subgroups))+1)]
+    #     return res
+    
 cdef class ParticleAssigner:
     '''
     ParticleAssigner class. This class is designed to assign particles to a structure given a potential surface and local acceleration defining the boosted potential (for details see: https://arxiv.org/abs/2107.13008). 
@@ -137,7 +405,7 @@ cdef class ParticleAssigner:
     cdef cnp.double_t[:] pot
     cdef cnp.double_t[:,:] pos
     cdef cnp.double_t[:,:] vel
-    cdef long[:] ids_fof
+    #cdef long[:] ids_fof
     
     cdef cbool verbose
     cdef cbool no_binding
@@ -153,37 +421,37 @@ cdef class ParticleAssigner:
     cdef cnp.double_t _Hd
     cdef cnp.double_t _delta_th
 
-    cdef long i0
-    cdef cnp.double_t[:] x0
-    cdef cnp.double_t[:] acc0
-    cdef cnp.uint8_t[:] visited
+    #cdef long i0
+    #cdef cnp.double_t[:] x0
+    #cdef cnp.double_t[:] acc0
+    #cdef cnp.uint8_t[:] visited
 
-    cdef cnp.uint8_t[:] _computed
-    cdef cpp_pq _computed_queue
-    cdef cnp.double_t[:] _phi 
-    cdef cnp.int64_t[:] group
-    cdef cnp.int64_t[:] subgroup
-    cdef Tracker group_tracker
-    cdef Tracker subgroup_tracker
-    cdef Tracker surface_tracker
-    cdef Tracker subsurface_tracker
+    #cdef cnp.uint8_t[:] _computed
+    #cdef cpp_pq _computed_queue
+    #cdef cnp.double_t[:] _phi 
+    #cdef cnp.int64_t[:] group
+    #cdef cnp.int64_t[:] subgroup
+    #cdef Tracker group_tracker
+    #cdef Tracker subgroup_tracker
+    #cdef Tracker surface_tracker
+    #cdef Tracker subsurface_tracker
 
-    cdef cnp.uint8_t[:] bound_mask
+    #cdef cnp.uint8_t[:] bound_mask
 
     
-    cdef cnp.int64_t _current_group
-    cdef cnp.int64_t _current_subgroup
+    # cdef cnp.int64_t _current_group
+    # cdef cnp.int64_t _current_subgroup
 
-    cdef cnp.double_t max_dist
-    cdef cnp.double_t new_min
+    # cdef cnp.double_t max_dist
+    # cdef cnp.double_t new_min
     cdef cnp.double_t _long_range_fac
     cdef cnp.double_t _zeta
     
-    cdef cbool _too_far
+    # cdef cbool _too_far
         
     def __init__(self, cnp.ndarray[long, ndim = 2] ngbs, cnp.ndarray[double, ndim = 1] pot, cnp.ndarray[double, ndim = 2] pos, cnp.ndarray[double, ndim = 2] vel, 
                  cnp.double_t scale_factor = 1., cnp.double_t Omega_m = 1., cnp.double_t Lbox = 1000., cnp.double_t H0 = 100, str threshold = 'EdS-cond',
-                 no_binding = False, verbose = False, cnp.ndarray[long, ndim = 1] ids_fof = np.empty([0], dtype = 'i8'), cbool custom_delta = False,  cnp.double_t delta = 0.):
+                 no_binding = False, verbose = False, cbool custom_delta = False,  cnp.double_t delta = 0.):
         
         self.nparts = ngbs.shape[0]
         self.nngbs = ngbs.shape[1]
@@ -192,7 +460,7 @@ cdef class ParticleAssigner:
         self.pot = pot
         self.pos = pos
         self.vel = vel
-        self.ids_fof = ids_fof
+        # self.ids_fof = ids_fof
         
         self.verbose = verbose
         self.no_binding = no_binding
@@ -210,35 +478,33 @@ cdef class ParticleAssigner:
             self._delta_th = delta
         else:
             self._delta_th = self.get_delta_th(threshold)
-        self.i0 = -1
-        self.x0 = None
-        self.acc0 = None
-        self.visited = np.zeros(pot.size, dtype = bool) # We may want to review these assignements
+        # self.i0 = -1
+        # self.x0 = None
+        # self.acc0 = None
+        # self.visited = np.zeros(pot.size, dtype = bool) # We may want to review these assignements
         
-        self._computed = np.zeros(pot.size, dtype = bool)
-        self._computed_queue = cpp_pq(compare_first)
-        self._phi = np.zeros(pot.size, dtype = 'f8') 
-        self.group = np.zeros(pot.size, dtype = 'i8')
-        self.subgroup = np.zeros(pot.size, dtype = 'i8')
+        # self._computed = np.zeros(pot.size, dtype = bool)
+        # self._computed_queue = cpp_pq(compare_first)
+        # self._phi = np.zeros(pot.size, dtype = 'f8') 
+        # self.group = np.zeros(pot.size, dtype = 'i8')
+        # self.subgroup = np.zeros(pot.size, dtype = 'i8')
 
-        self.group_tracker = Tracker(self.nparts)
-        self.subgroup_tracker = Tracker(self.nparts)
-        self.surface_tracker = Tracker(self.nparts)
-        self.subsurface_tracker = Tracker(self.nparts)
+        # self.group_tracker = Tracker(self.nparts)
+        # self.subgroup_tracker = Tracker(self.nparts)
+        # self.surface_tracker = Tracker(self.nparts)
+        # self.subsurface_tracker = Tracker(self.nparts)
         
-        self.bound_mask = np.zeros(pot.size, dtype = bool)
+        # self.bound_mask = np.zeros(pot.size, dtype = bool)
         
-        self._current_group = 0
-        self._current_subgroup = 0
+        # self._current_group = 0
+        # self._current_subgroup = 0
         
-        self.new_min = 3.4e38 # this is just initialising the variable
-        self._too_far = False
+        #self.new_min = 3.4e38 # this is just initialising the variable
+        #self._too_far = False
         self._long_range_fac =  0.25 * self._delta_th *self._Omega_m * self._scale_factor**-3 * self._H0 * self._H0
         if verbose:
             print(f"long range factor: {self._long_range_fac}")
-        self.max_dist = 1. 
-        # We should only realy be worried once structures start getting biger than 1 Mpc.
-        # Note that this is a first guess and is changed adaptively to accomodate larger objects.
+        #
         return
     
     # ================== Cosmology ==============================
@@ -384,118 +650,57 @@ cdef class ParticleAssigner:
         res = np.array(lst, dtype=bool)
         return res
         
-    cpdef void set_current_group(self, long i):
-        self._current_group = i
-        return
+    # cpdef void set_current_group(self, long i):
+    #     self._current_group = i
+    #     return
     
-    cpdef cnp.ndarray[long, ndim = 1, cast = True] get_group_ledger(self):
-        cdef cnp.ndarray[long, ndim = 1, cast = True] res = np.asarray(self.group)
-        return res
+    # cpdef cnp.ndarray[long, ndim = 1, cast = True] get_group_ledger(self):
+    #     cdef cnp.ndarray[long, ndim = 1, cast = True] res = np.asarray(self.group)
+    #     return res
     
-    cpdef cnp.ndarray[long, ndim = 1, cast = True] get_subgroup_ledger(self):
-        cdef cnp.ndarray[long, ndim = 1, cast = True] res = np.asarray(self.subgroup)
-        return res
+    # cpdef cnp.ndarray[long, ndim = 1, cast = True] get_subgroup_ledger(self):
+    #     cdef cnp.ndarray[long, ndim = 1, cast = True] res = np.asarray(self.subgroup)
+    #     return res
     
-    cpdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] get_visited(self):
-        cdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] res = self.to_bool_array(self.visited)
+    cpdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] get_visited(self, Halo halo):
+        cdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] res = self.to_bool_array(halo.visited)
         return res
 
-    cpdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] get_group_mask(self):
-        cdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] res = self.to_bool_array(self.group_tracker.get_mask())
+    cpdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] get_group_mask(self, Halo halo):
+        cdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] res = self.to_bool_array(halo.group_tracker.get_mask())
         return res
     
-    cpdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] get_surface_mask(self):
-        cdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] res = self.to_bool_array(self.surface_tracker.get_mask())
+    cpdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] get_surface_mask(self, Halo halo):
+        cdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] res = self.to_bool_array(halo.surface_tracker.get_mask())
         return res
     
-    cpdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] get_subsurface_mask(self):
-        cdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] res = self.to_bool_array(self.subsurface_tracker.get_mask())
+    cpdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] get_subsurface_mask(self, Halo halo):
+        cdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] res = self.to_bool_array(halo.subsurface_tracker.get_mask())
         return res
     
-    cpdef cnp.ndarray[long, ndim = 1, cast = True] get_group_particles(self, i):
-        cdef cnp.ndarray[long, ndim = 1, cast = True] res = np.where(np.asarray(self.group) == i)[0]
-        return res
+    # cpdef cnp.ndarray[long, ndim = 1, cast = True] get_group_particles(self, Halo halo):
+    #     cdef cnp.ndarray[long, ndim = 1, cast = True] res = np.where(np.asarray(self.group) == i)[0]
+    #     return res
     
-    cpdef cnp.ndarray[long, ndim = 1, cast = True] get_current_group_particles(self):
-        return self.group_tracker.get_particles()
+    cpdef cnp.ndarray[long, ndim = 1, cast = True] get_current_group_particles(self, Halo halo):
+        return halo.group_tracker.get_particles()
     
-    cpdef cnp.ndarray[long, ndim = 1, cast = True] get_current_surface_particles(self):
-        return self.surface_tracker.get_particles()
+    cpdef cnp.ndarray[long, ndim = 1, cast = True] get_current_surface_particles(self, Halo halo):
+        return halo.surface_tracker.get_particles()
     
-    cpdef list get_subgroups(self, i):
-        cdef list res
-        cdef cnp.ndarray[long, ndim = 1, cast = True] ids = self.get_group_particles(i)
-        cdef cnp.ndarray[long, ndim = 1, cast = True] subgroups = self.get_subgroup_ledger()[ids]
-        cdef long index, j
-        res = [ids[subgroups == j] for j in range(0,int(np.max(subgroups))+1)]
-        return res
+    cpdef list get_subgroups(self, Halo halo):
+        # cdef list res
+        # cdef cnp.ndarray[long, ndim = 1, cast = True] ids = self.get_group_particles()
+        # cdef cnp.ndarray[long, ndim = 1, cast = True] subgroups = self.get_subgroup_ledger()[ids]
+        # cdef long index, j
+        # res = [ids[subgroups == j] for j in range(0,int(np.max(subgroups))+1)]
+        # return res
+        return halo.get_subgroups()
 
     cpdef cnp.double_t get_long_range_fac(self):
         return self._long_range_fac
     
     #####=================== Boost!!! ===========================
-    cpdef void set_x0(self, long i0, cnp.double_t[:] x0):
-        '''
-        Function which sets 'x0' the reference position for the calculation of the boosted potential.
-        
-        Parameters:
-        ----------
-        x0: (array of d-floats) d-dimensional refference position vector.
-
-        '''
-        self.i0 = i0
-        self.x0 = x0
-        cdef long i
-        cdef cpair[cnp.double_t, long] elem
-           
-        while not self._computed_queue.empty():
-            elem = self._computed_queue.top()
-            self._computed_queue.pop()
-            i = elem.second
-            self._phi[i] = 0.
-            self._computed[i] = False
-            
-        self._computed_queue = cpp_pq(compare_first)
-        return
-    
-    cpdef void set_acc0(self, cnp.double_t[:] acc0):
-        '''
-        Function which sets 'acc0' the reference acceleration for the calculation of the boosted potential.
-        
-        Parameters:
-        ----------
-        acc0: (array of d-floats) d-dimensional refference acceleration vector.
-
-        '''
-        cdef int k
-        self.acc0 = np.zeros(len(acc0))
-        for k in range(len(acc0)):
-            self.acc0[k] =  acc0[k]
-        cdef long i
-        cdef cpair[cnp.double_t, long] elem
-           
-        while not self._computed_queue.empty():
-            elem = self._computed_queue.top()
-            self._computed_queue.pop()
-            i = elem.second
-            self._phi[i] = 0.
-            self._computed[i] = False
-            
-        self._computed_queue = cpp_pq(compare_first)
-        return
-    
-    def set_fof_ids(self, ids_fof):
-        '''
-        Function which sets 'ids_fof' the ids of a precomputed group (not necesarrily FoF) used to find the first minimum of the boosted potential.
-        
-        Parameters:
-        ----------
-        x0: (array of d-floats) d-dimensional refference acceleration vector.
-
-        '''
-        self.ids_fof = ids_fof 
-        return
-    
     def recentre_positions_numpy(self,pos, x0):
         '''
         Function which recentres and wraps the position vector 'pos' to a new centre at 'x0'.
@@ -525,7 +730,7 @@ cdef class ParticleAssigner:
             res[i] = (pos[i] - x0[i] - self.Lbox/2)%self.Lbox - self.Lbox/2
         return res
     
-    cdef cnp.double_t phi_boost(self, long i):
+    cdef cnp.double_t phi_boost(self, long i, Halo halo):
         '''
         Function which calculates the boosted potential at the position of particle i
         
@@ -538,9 +743,9 @@ cdef class ParticleAssigner:
         phi_boost: (float or array of floats) boosted potential of the requested particles
         '''
         
-        if self.x0 is None:
+        if halo.x0 is None:
             raise ValueError('A reference position x0 must be set first. This can be done by calling the set_x0 or segment methods.')
-        if self.acc0 is None:
+        if halo.acc0 is None:
             raise ValueError('A reference acceleration acc0 must be set first. This can be done by calling the set_acc0 or segment methods.')
             
         cdef cnp.double_t[:] x
@@ -549,27 +754,34 @@ cdef class ParticleAssigner:
         cdef cnp.double_t res
         cdef cpair[cnp.double_t, long] elem
         
-        if self._computed[i]:
-            res = self._phi[i]
+        if halo.computed_tracker.is_mask(i):
+             res = halo._phi[i]
         else:
-            x = self.recentre_positions(self.pos[i,:],self.x0)
+            x = self.recentre_positions(self.pos[i,:], halo.x0)
             
             temp_xx = 0.0
             temp_xa = 0.0
             for k in range(len(x)):
                 temp_xx += x[k]*x[k]
-                temp_xa += x[k]*self.acc0[k]
-            self._phi[i] = (self.pot[i] - self.pot[self.i0]) / self._scale_factor \
+                temp_xa += x[k]*halo.acc0[k]
+            res = (self.pot[i] - self.pot[halo.i0]) / self._scale_factor \
                             + temp_xa / self._scale_factor \
                             - self._long_range_fac * temp_xx  * self._scale_factor * self._scale_factor
-            res = self._phi[i]
+            
             # We mark this particle as already computed.
-            self._computed[i] = True
+            
+            #if not halo.computed_tracker.is_mask(i):
             elem = (res, i)
-            self._computed_queue.push(elem)
+            halo.computed_tracker.add_elem(elem)
+            halo._phi[i] = res
+        #res = self._phi[i]
+        
+        #self._computed[i] = True
+        #elem = (res, i)
+        #self._computed_queue.push(elem)
         return res
     
-    def get_phi_boost(self, indices):
+    def get_phi_boost(self, indices, halo):
         '''
         Function which calculates the boosted potential at the position of particle i
         
@@ -582,27 +794,28 @@ cdef class ParticleAssigner:
         phi_boost: (float or array of floats) boosted potential of the requested particles
         '''
         
-        if self.x0 is None:
-            raise ValueError('A reference position x0 must be set first. This can be done by calling the set_x0 or segment methods.')
-        if self.acc0 is None:
-            raise ValueError('A reference acceleration acc0 must be set first. This can be done by calling the set_acc0 or segment methods.')
+        # if halo.get_x0() is None:
+        #     raise ValueError('A reference position x0 must be set first. This can be done by calling the set_x0 or segment methods.')
+        # if halo.get_acc0() is None:
+        #     raise ValueError('A reference acceleration acc0 must be set first. This can be done by calling the set_acc0 or segment methods.')
         
         indices = np.array(indices)
         if indices.size == 1:
             indices = np.array([indices.item(),])
         res = np.zeros(indices.size, dtype = 'f8')
-        cond = np.zeros(indices.size, dtype = bool)
-        res[cond] = np.asarray(self._phi)[indices[cond]]
+        #cond = np.zeros(indices.size, dtype = bool)
+        #res[cond] = np.asarray(self._phi)[indices[cond]]
         
-        for j,i in enumerate(indices[np.logical_not(cond)]):
-            res[j] = self.phi_boost(i)
+        for j,i in enumerate(indices):
+            res[j] = self.phi_boost(i, halo)
         if res.size == 1:
             return res.item()
         return res
     
-    #####=================== Neighbours ==================
+    #####=================== Neighbours ================== 
+    #####     These are deprecated and will be deleted
     
-    def subfind_neighbours(self):
+    def subfind_neighbours(self, Halo halo):
         '''
         Function altering the list of neighbours to obtain a connectivity equivalent to that used within the subfind algorithm. See Springel et al. 2001, MNRAS 328, 726–750 for details on the subfind algorithm. Warning this functgion will rewrite the entire neighbours list and as such can take an extremely long amount of time if used on too many particles.
         
@@ -610,11 +823,11 @@ cdef class ParticleAssigner:
         ----------
         None
         '''
-        
+        cdef int i, j
         recip_ngbs = list(self.ngbs)
         
         for i in range(self.pos.shape[0]):
-            cond = self.phi_boost(recip_ngbs[i]) < self.phi_boost(i)
+            cond = self.phi_boost(recip_ngbs[i], halo) < self.phi_boost(i, halo)
             recip_ngbs[i] = np.array(recip_ngbs[i][cond][:2])
     
         for i in range(self.pos.shape[0]):
@@ -632,8 +845,8 @@ cdef class ParticleAssigner:
         ----------
         None
         '''
-        
-        recip_ngbs = list(self.ngbs)
+        cdef int i,j
+        cdef list recip_ngbs = list(self.ngbs)
         
         for i in range(self.pos.shape[0]):
             for j in recip_ngbs[i]:
@@ -644,7 +857,7 @@ cdef class ParticleAssigner:
     
     # ================== Particle Assignment ====================
     
-    cpdef long first_minimum(self, long i0, double r = 1):
+    cpdef long first_minimum(self, long i0, Halo halo, double r = 1):
         cdef int counter = 1
         cdef long i = i0
         cdef long j, k
@@ -658,16 +871,16 @@ cdef class ParticleAssigner:
         ngbs_temp = self.ngbs[i]
         phi_ngbs = np.zeros(len(ngbs_temp))
         for j in range(len(ngbs_temp)):
-            phi_ngbs[j] = self.phi_boost(ngbs_temp[j])
+            phi_ngbs[j] = self.phi_boost(ngbs_temp[j], halo)
 
-        while np.min(phi_ngbs) < self.phi_boost(i):
+        while np.min(phi_ngbs) < self.phi_boost(i, halo):
 
             counter += 1
             i = ngbs_temp[np.argmin(phi_ngbs)]
             ngbs_temp = self.ngbs[i]
             phi_ngbs = np.zeros(len(ngbs_temp))
             for j in range(len(ngbs_temp)):
-                phi_ngbs[j] = self.phi_boost(ngbs_temp[j])
+                phi_ngbs[j] = self.phi_boost(ngbs_temp[j], halo)
 
                 
             if counter % 100 == 0:
@@ -679,7 +892,7 @@ cdef class ParticleAssigner:
                 if dist > r:
                     if self.verbose: print(f"The minimum is {float(dist):.3} (> {float(r):.3}) Mpc away from the starting position.\
                                          \nThis may indicate that there is either no miminum or that you are starting index is too far away.", flush = True)
-                    self._too_far = True
+                    halo._too_far = True
                     return -1
                 if counter > 1000:
                     if self.verbose: print("The minimum was not found after 1000 steps.\nThis may indicate that there is either no miminum or that you are starting index is too far away.", flush = True)
@@ -692,61 +905,62 @@ cdef class ParticleAssigner:
         if dist > r:
             if self.verbose: print(f"The minimum is {float(dist):.3} (> {float(r):.3}) Mpc away from the starting position.\
                                   \nThis may indicate that there is either no miminum or that you are starting index is too far away.", flush = True)
-            self._too_far = True
+            halo._too_far = True
             return -1
         return i
     
-    cpdef long fof_minimum(self, long[:] ids_fof):
+    cpdef long fof_minimum(self, long[:] ids_fof, Halo halo):
         cdef long k, i_min
         cdef cnp.double_t phi_min
         cdef cpair[cnp.double_t, long] elem
         cdef cpp_pq loc_queue = cpp_pq(compare_first)
         for k in ids_fof:
-            elem = (self.phi_boost(k), k)
+            elem = (self.phi_boost(k, halo), k)
             
             loc_queue.push(elem)
         elem = loc_queue.top()
         return elem.second
     
-    cpdef long itt_minimum(self, long i0, cnp.double_t r = 1.):
+    cpdef long itt_minimum(self, long i0, Halo halo, cnp.double_t r = 1.):
         cdef long i0_itt = i0
         cdef long i0_fof, i0_temp
         cdef cbool min_found = False
         cdef set mem = set()
 
-        if len(self.ids_fof) > 0:
-            i0_fof = self.fof_minimum(self.ids_fof)
-            i0_fof = self.first_minimum(i0_fof, r)
-            if i0_fof not in set(self.ids_fof) or self._too_far:
+        if len(halo.ids_fof) > 0:
+            i0_fof = self.fof_minimum(halo.ids_fof, halo)
+            i0_fof = self.first_minimum(i0_fof, halo, r)
+            if i0_fof not in set(halo.ids_fof) or halo.is_too_far():
                 if self.verbose: print(f"The initial minimum is outside of the seed group falling back to standard approach.", flush = True)
-                if self._too_far: self._too_far = False
-                i0_temp = self.first_minimum(i0_itt, r)
-                if i0_temp not in set(self.ids_fof) or self._too_far:
+                if halo.is_too_far(): halo.not_too_far()
+                i0_temp = self.first_minimum(i0_itt, halo, r)
+                if i0_temp not in set(halo.ids_fof) or halo.is_too_far():
                     if self.verbose: print(f"The initial minimum is still outside of the seed group. Exiting", flush = True)
                     return -1
             else:
                 i0_itt = i0_fof
         else:
-            i0_itt = self.first_minimum(i0, r)
-
-        self.set_x0(i0_itt, self.pos[i0_itt])
-        if i0_itt == self.first_minimum(i0_itt, r):
+            i0_itt = self.first_minimum(i0, halo, r)
+        
+        halo.set_x0(i0_itt, self.pos[i0_itt])
+        
+        if i0_itt == self.first_minimum(i0_itt, halo, r):
             min_found = True
             i0 = i0_itt
-
+        
         while not min_found: # Itterate over first minimum to check that it is indeed a minimum in it's own reference frame
-            i0_temp = self.first_minimum(i0_itt, r)
-            if i0_temp == -1 or self._too_far:
+            i0_temp = self.first_minimum(i0_itt, halo, r)
+            if i0_temp == -1 or halo.is_too_far():
                 if self.verbose: print(f"Something went wrong itterating over minima. Exiting", flush = True)
                 return -1
             else: i0_itt = i0_temp
-            if len(self.ids_fof) > 0: # If we have a fof seed make sure we don't leave the group through here.
-                if i0_itt not in set(self.ids_fof) or self._too_far:
+            if len(halo.ids_fof) > 0: # If we have a fof seed make sure we don't leave the group through here.
+                if i0_itt not in set(halo.ids_fof) or halo.is_too_far():
                     if self.verbose: print(f"The initial minimum is still outside of the seed group. Exiting", flush = True)
                     return -1
 
-            self.set_x0(i0_itt, self.pos[i0_itt])
-            if i0_itt == self.first_minimum(i0_itt, r): # This particle is the minimum in it's own refference frame.
+            halo.set_x0(i0_itt, self.pos[i0_itt])
+            if i0_itt == self.first_minimum(i0_itt, halo, r): # This particle is the minimum in it's own refference frame.
                 min_found = True
                 i0 = i0_itt
 
@@ -756,7 +970,7 @@ cdef class ParticleAssigner:
             mem.add(i0_itt) # Keep track of which particles have been visited to avoid getting stuck in a loop
         return i0
     
-    cpdef void fill_below(self, cnp.int64_t i):
+    cpdef void fill_below(self, cnp.int64_t i, Halo halo):
         '''
         Itterative watershed function which finds all the particles continuosly connected to particle i that have a boosted potential lower than particle i. 
         
@@ -769,62 +983,62 @@ cdef class ParticleAssigner:
         i: (int) index of the particle defining the level of the potential
         '''
         
-        cdef double phi_curr = self.phi_boost(i)
+        cdef double phi_curr = self.phi_boost(i, halo)
         cdef long[:] ngbs_temp
         cdef long j, k, l, index
-        cdef cnp.ndarray[long, ndim = 1, cast = True] id_surf
+        #cdef cnp.ndarray[long, ndim = 1, cast = True] id_surf
         cdef cnp.ndarray[long, ndim = 1, cast = True] indices
         cdef cpair[cnp.double_t, long] elem, top_elem
         
         # Reset Trackers
-        self.group_tracker.reset()
-        self.surface_tracker.reset()
+        halo.group_tracker.reset()
+        halo.surface_tracker.reset()
         
         # Put starting particle in group
-        self.group[i] = self._current_group
-        self.visited[i] = True
-        elem = (self.phi_boost(i), i)
-        self.group_tracker.add_elem(elem)
+        #self.group[i] = self._current_group
+        halo.visited[i] = True
+        elem = (self.phi_boost(i, halo), i)
+        halo.group_tracker.add_elem(elem)
         
         # Calculate it's potential and define its neighbours as surface particles
         
         ngbs_temp = self.ngbs[i]
         for k in ngbs_temp:
-            if not self.visited[k]:
-                elem = (self.phi_boost(k), k)
-                self.surface_tracker.add_elem(elem)
+            if not halo.visited[k]:
+                elem = (self.phi_boost(k, halo), k)
+                halo.surface_tracker.add_elem(elem)
         
         # Take surface particle with lowest potential
         
-        elem = self.surface_tracker.get_top_elem()
-        self.surface_tracker.remove_top_elem()
+        elem = halo.surface_tracker.get_top_elem()
+        halo.surface_tracker.remove_top_elem()
         j = elem.second
         
-        while self.phi_boost(j) - phi_curr < 0.0:
-            self.group[j] = self._current_group
-            self.visited[j] = True
-            elem = (self.phi_boost(j), j)
-            self.group_tracker.add_elem(elem)
+        while self.phi_boost(j, halo) - phi_curr < 0.0:
+            #self.group[j] = self._current_group
+            halo.visited[j] = True
+            elem = (self.phi_boost(j, halo), j)
+            halo.group_tracker.add_elem(elem)
             
             ngbs_temp = self.ngbs[j]
             
             for k in ngbs_temp:
-                if self.surface_tracker.is_mask(k) or self.visited[k]:
+                if halo.surface_tracker.is_mask(k) or halo.visited[k]:
                     # Avoid duplicates or going back to a particle that has already been visited
                     continue
                 else: 
                     # Insert particle in sorted order
-                    elem = (self.phi_boost(k), k)
-                    self.surface_tracker.add_elem(elem)
+                    elem = (self.phi_boost(k,halo), k)
+                    halo.surface_tracker.add_elem(elem)
 
-            top_elem = self.surface_tracker.get_top_elem()
-            self.surface_tracker.remove_top_elem()
+            top_elem = halo.surface_tracker.get_top_elem()
+            halo.surface_tracker.remove_top_elem()
             j = top_elem.second
         return
     
 
     
-    cdef void fill_below_substructure(self, long i, double phi_min):
+    cdef void fill_below_substructure(self, long i, Halo halo, double phi_min):
         '''
         itterative watershed function which finds all the particles continuosly connected to particle i that have a boosted potential lower than particle k. 
         
@@ -838,11 +1052,11 @@ cdef class ParticleAssigner:
         i_surf: (set of ints) set of particles which are direct neighbours of particles that are within the structure.
         phi_min: (float) current minimum of the potential well
         '''
-        cdef cnp.ndarray[long, ndim = 1, cast = True] id_surf
+        #cdef cnp.ndarray[long, ndim = 1, cast = True] id_surf
         cdef cnp.double_t[:] x
         cdef cnp.double_t temp_xx
         cdef double dist
-        cdef double phi_curr = self.phi_boost(i)
+        cdef double phi_curr = self.phi_boost(i, halo)
         cdef long j, k, index, j_old
         cdef long[:] ngbs_temp
         cdef int counter = 1
@@ -851,16 +1065,16 @@ cdef class ParticleAssigner:
         # Empty queue
         cdef cpair[cnp.double_t, long] elem
 
-        if not self.subsurface_tracker.is_empty():
-            self.subsurface_tracker.reset()
-        if not self.subgroup_tracker.is_empty():
-            self.subgroup_tracker.reset()
+        if not halo.subsurface_tracker.is_empty():
+            halo.subsurface_tracker.reset()
+        if not halo.subgroup_tracker.is_empty():
+            halo.subgroup_tracker.reset()
         
         # Start by adding the refference particle to the group
         
-        self.visited[i] = True
-        elem = (self.phi_boost(i),i)
-        self.subgroup_tracker.add_elem(elem)
+        halo.visited[i] = True
+        elem = (self.phi_boost(i,halo),i)
+        halo.subgroup_tracker.add_elem(elem)
 
         # Calculate it's potential and define its neighbours as surface particles
         
@@ -868,98 +1082,98 @@ cdef class ParticleAssigner:
 
         
         for k in ngbs_temp:
-            if not self.visited[k]:
-                elem = (self.phi_boost(k), k)
-                self.subsurface_tracker.add_elem(elem)
+            if not halo.visited[k]:
+                elem = (self.phi_boost(k, halo), k)
+                halo.subsurface_tracker.add_elem(elem)
         
-        if self.subsurface_tracker.is_empty():
+        if halo.subsurface_tracker.is_empty():
             if self.verbose: 
                 print(f"subsurface queue started empty {i}", flush = True)
                 print(f"ngbs: {[ngb for ngb in self.ngbs[i]]}", flush = True)
-                print(f"pots: {[self.phi_boost(ngb) for ngb in self.ngbs[i]]}", flush = True)
-                print(f"visited: {[self.visited[ngb] for ngb in self.ngbs[i]]}", flush = True)
-                print(f"groups: {[self.group[ngb] for ngb in self.ngbs[i]]}", flush = True)
+                print(f"pots: {[self.phi_boost(ngb,halo) for ngb in self.ngbs[i]]}", flush = True)
+                print(f"visited: {[halo.visited[ngb] for ngb in self.ngbs[i]]}", flush = True)
+                #print(f"groups: {[self.group[ngb] for ngb in self.ngbs[i]]}", flush = True)
             return
         
-        elem = self.subsurface_tracker.get_top_elem()
+        elem = halo.subsurface_tracker.get_top_elem()
         j = elem.second
         j_old = -1
         
-        while self.phi_boost(j) - phi_curr < 0:
+        while self.phi_boost(j, halo) - phi_curr < 0:
             #========= Test ================ 
-            if self.visited[j]: # If we've already put j in the subgroup or is part of the main group
+            if halo.visited[j]: # If we've already put j in the subgroup or is part of the main group
                 if self.verbose: print(f"Particle {j} already visited but in subsurface queue...", flush = True)
-                self.subsurface_tracker.remove_top_elem()
+                halo.subsurface_tracker.remove_top_elem()
                 
-                if self.subsurface_tracker.is_empty():
+                if halo.subsurface_tracker.is_empty():
                     #self._too_far = True
                     if self.verbose: print(f"subsurface queue empty {j}", flush = True)
                     return
-                elem = self.subsurface_tracker.get_top_elem()
+                elem = halo.subsurface_tracker.get_top_elem()
                 j = elem.second
                 continue
             
             
             if j == j_old:
-                self._too_far = True
+                halo._too_far = True
                 if self.verbose: print(f"ya in a loop it seems {j}", flush = True)
                 return
             j_old = j
             #=============================== 
             counter += 1        
             # By taking this one we ensure we are always going down the lowest brach first.
-            phi_j = self.phi_boost(j)
+            phi_j = self.phi_boost(j, halo)
             
             if counter % 100 == 0: # Check if we haven't wandered too far away
-                x = self.recentre_positions(self.pos[j], self.x0)
+                x = self.recentre_positions(self.pos[j], halo.x0)
                 temp_xx = 0.0
                 for k in range(len(x)):
                     temp_xx += x[k]*x[k]
                 dist = np.sqrt(temp_xx)
-                if dist > 3*self.max_dist:
+                if dist > 3*halo.max_dist:
                     if self.verbose:
-                        print(f"The new minimum is {float(dist):.3} (> {float(3*self.max_dist):.3}) Mpc away from the starting position.\nThis may indicate that there is either no miminum or that you are starting index is too far away.")
-                    self._too_far = True
+                        print(f"The new minimum is {float(dist):.3} (> {float(3*halo.max_dist):.3}) Mpc away from the starting position.\nThis may indicate that there is either no miminum or that you are starting index is too far away.")
+                    halo._too_far = True
                     return
     
-                if self.subgroup_tracker.get_size() > self.group_tracker.get_size():
+                if halo.subgroup_tracker.get_size() > halo.group_tracker.get_size():
                     if self.verbose:
-                        print(f"Trying to add in a structure which is much larger than the current structure {self.subgroup_tracker.get_size()} > {self.group_tracker.get_size()}. Exiting.")
-                    self._too_far = True
+                        print(f"Trying to add in a structure which is much larger than the current structure {halo.subgroup_tracker.get_size()} > {halo.group_tracker.get_size()}. Exiting.")
+                    halo._too_far = True
                     return
             
             # If we are in this we already know that j has a lower potential
             # So we can add it directly and remove it from the surface
 
-            self.subsurface_tracker.remove_top_elem()
-            self.visited[j] = True
-            self.subgroup_tracker.add_elem(elem)
+            halo.subsurface_tracker.remove_top_elem()
+            halo.visited[j] = True
+            halo.subgroup_tracker.add_elem(elem)
             
             if phi_j < phi_min: # Check to see if we are going below the current minimum potential
-                self.new_min = phi_j
+                halo.new_min = phi_j
                 return
             # Add neighbours to surface
             for k in self.ngbs[j]:
-                if self.subsurface_tracker.is_mask(k) or self.visited[k]:
+                if halo.subsurface_tracker.is_mask(k) or halo.visited[k]:
                     # Avoid duplicates or going back to a particle that has already been visited
                     continue
                 else: 
                     # Insert particle in sorted order
-                    elem = (self.phi_boost(k), k)
-                    self.subsurface_tracker.add_elem(elem)
+                    elem = (self.phi_boost(k,halo), k)
+                    halo.subsurface_tracker.add_elem(elem)
             
             #========= Test ================        
-            if self.subsurface_tracker.is_empty():
+            if halo.subsurface_tracker.is_empty():
                 #self._too_far = True
                 if self.verbose: print(f"subsurface queue empty {j}", flush = True)
                 return
             #=============================== 
             # Take subsurface particle with lowest potential
-            elem = self.subsurface_tracker.get_top_elem()
+            elem = halo.subsurface_tracker.get_top_elem()
             j = elem.second
         return
     
-    cpdef tuple grow(self):
+    cpdef tuple grow(self, Halo halo):
         '''
         Itterative algorithm which grows the structure one particle at a time. At each step the particle with the lowest potential on the surface is considered. If all of its neighbours with lower potential currently belongs to the structure then it is also added to the structure. If any of its lower neighbours have lower potentials and are NOT associated to the structure then the particle is marked as a saddle point. These braches are then explored with a watershed algorithm to find if any brach has reaches values that are deeper than the current minimum of the boosted potential. If so the algorithm terminates.
         
@@ -980,8 +1194,8 @@ cdef class ParticleAssigner:
         cdef double phi_min, phi_max
         
         cdef long i_prev, n_part
-        cdef cnp.ndarray[long, ndim = 1, cast = True] id_surf
-        cdef cnp.ndarray[long, ndim = 1, cast = True] indices
+        #cdef cnp.ndarray[long, ndim = 1, cast = True] id_surf
+        #cdef cnp.ndarray[long, ndim = 1, cast = True] indices
         cdef long j, k, index, elem, k_loc
         
         cdef long i_cons
@@ -997,23 +1211,24 @@ cdef class ParticleAssigner:
         cdef cnp.double_t dist, phi_cons, phi_k
         cdef cpair[cnp.double_t, long] qelem
         cdef long i_min, i_max, i
+        cdef list subgroup
         
-        group_particles = self.get_current_group_particles()
+        group_particles = halo.get_current_group_particles()
         n_part = group_particles.size
-        phi_min = self.phi_boost(group_particles[0])
+        phi_min = self.phi_boost(group_particles[0], halo)
         i_min = group_particles[0]
-        phi_max = self.phi_boost(group_particles[0])
+        phi_max = self.phi_boost(group_particles[0], halo)
         i_max = group_particles[0]
         
         for k in group_particles:
-            x = self.recentre_positions(self.pos[k], self.x0)
+            x = self.recentre_positions(self.pos[k], halo.x0)
             temp_xx = 0.0
             for k_loc in range(len(x)):
                 temp_xx += x[k_loc]*x[k_loc] 
             dist = np.sqrt(temp_xx)
-            if dist > self.max_dist:
-                self.max_dist = dist
-            phi_k = self.phi_boost(k)
+            if dist > halo.max_dist:
+                halo.max_dist = dist
+            phi_k = self.phi_boost(k, halo)
             if phi_k < phi_min:
                 phi_min = phi_k
                 i_min = k
@@ -1025,68 +1240,68 @@ cdef class ParticleAssigner:
 
         for _ in range(len(self.pot)): # <== I just don't want to write 'while True:'
             
-            if self.surface_tracker.is_empty():
+            if halo.surface_tracker.is_empty():
                 if self.verbose: print('Surface empty', flush = True)
                 break
             
-            qelem = self.surface_tracker.get_top_elem()
+            qelem = halo.surface_tracker.get_top_elem()
             phi_cons = qelem.first
             i_cons = qelem.second
             
             if i_cons == i_prev:
-                raise RecursionError(f"The algorithm seems to have gotten stuck at i = {i_cons} with {self.group_tracker.get_size()} particles assigned and {self.surface_tracker.get_size()} pending...")
+                raise RecursionError(f"The algorithm seems to have gotten stuck at i = {i_cons} with {halo.group_tracker.get_size()} particles assigned and {halo.surface_tracker.get_size()} pending...")
             i_prev = i_cons
             
-            if self.visited[i_cons]: # If we've already put i_cons in the group but it was still in the surface.
+            if halo.visited[i_cons]: # If we've already put i_cons in the group but it was still in the surface.
                 if self.verbose: print(f"{i_cons} had already been visited but was still in surface queue")
-                self.subsurface_tracker.remove_top_elem()
+                halo.subsurface_tracker.remove_top_elem()
                 continue
                 
-            self.visited[i_cons] = True
+            halo.visited[i_cons] = True
             ngbs_temp = self.ngbs[i_cons]
             
             low_pot_cond = False
             for j in range(len(ngbs_temp)):
-                if self.phi_boost(ngbs_temp[j]) < self.phi_boost(i_cons):
+                if self.phi_boost(ngbs_temp[j], halo) < self.phi_boost(i_cons, halo):
                     low_pot_cond = True
                     break
 
-            x = self.recentre_positions(self.pos[i_cons], self.x0)
+            x = self.recentre_positions(self.pos[i_cons], halo.x0)
             temp_xx = 0.0
             for k_loc in range(len(x)):
                 temp_xx += x[k_loc]*x[k_loc] 
             dist = np.sqrt(temp_xx)
-            if dist > self.max_dist:
-                self.max_dist = dist
+            if dist > halo.max_dist:
+                halo.max_dist = dist
             
             if not low_pot_cond:
                 # This can happen when hitting boundaries, or for very small local minima
                 # These particles are recaptured by the code later if we just skip them.
                 if self.verbose: 
                     print(f"{i_cons} low_pot_cond failed: Has no neighbours with lower potential", flush = True)
-                    print(f"Relative potentials: {[self.phi_boost(ngb) - self.phi_boost(i_cons) for ngb in self.ngbs[i_cons]]}", flush = True)
-                    print(f"Neighbouring groups: {[self.group[ngb] for ngb in self.ngbs[i_cons]]}", flush = True)
-                    print(f"Neighbouring visits: {[self.visited[ngb] for ngb in self.ngbs[i_cons]]}", flush = True)
-                    print(f"Neighbouring surface: {[self.surface_tracker.is_mask(ngb) for ngb in self.ngbs[i_cons]]}", flush = True)
+                    print(f"Relative potentials: {[self.phi_boost(ngb, halo) - self.phi_boost(i_cons, halo) for ngb in self.ngbs[i_cons]]}", flush = True)
+                    #print(f"Neighbouring groups: {[self.group[ngb] for ngb in self.ngbs[i_cons]]}", flush = True)
+                    print(f"Neighbouring visits: {[halo.visited[ngb] for ngb in self.ngbs[i_cons]]}", flush = True)
+                    print(f"Neighbouring surface: {[halo.surface_tracker.is_mask(ngb) for ngb in self.ngbs[i_cons]]}", flush = True)
             
-                self.surface_tracker.remove_top_elem()
-                self.visited[i_cons] = False
+                halo.surface_tracker.remove_top_elem()
+                halo.visited[i_cons] = False
                 continue
             
             if_cond = True
             
             for k, elem in enumerate(ngbs_temp):
-                if self.phi_boost(elem) < self.phi_boost(i_cons):
-                    if_cond *= self.group_tracker.is_mask(elem)
+                if self.phi_boost(elem, halo) < self.phi_boost(i_cons, halo):
+                    if_cond *= halo.group_tracker.is_mask(elem)
             
             if if_cond:
                 # Tag i_cons as part of the main group
                 qelem = (phi_cons, i_cons)
-                self.group[i_cons] = self._current_group
-                self.group_tracker.add_elem(qelem)
+                #self.group[i_cons] = self._current_group
+                halo.group_tracker.add_elem(qelem)
                 
                 # Remove it from the surface
-                self.surface_tracker.remove_top_elem()
+                halo.surface_tracker.remove_top_elem()
                 
                 if phi_cons < phi_min:
                     phi_min = phi_cons
@@ -1096,55 +1311,55 @@ cdef class ParticleAssigner:
                     i_max = i_cons
 
                 for k in ngbs_temp:
-                    if self.surface_tracker.is_mask(k) or self.visited[k]:
+                    if halo.surface_tracker.is_mask(k) or halo.visited[k]:
                         # Avoid duplicates or going back to a particle that has already been visited
                         continue
                     else:
                         # Insert particle in sorted order
-                        qelem = (self.phi_boost(k), k)
-                        self.surface_tracker.add_elem(qelem)
+                        qelem = (self.phi_boost(k, halo), k)
+                        halo.surface_tracker.add_elem(qelem)
 
             else:
                 # Or check if there is a substructure
-                self.visited[i_cons] = False
-                self.new_min = phi_cons
+                halo.visited[i_cons] = False
+                halo.new_min = phi_cons
                 
-                self.subsurface_tracker.reset()
-                self.subgroup_tracker.reset()
+                halo.subsurface_tracker.reset()
+                halo.subgroup_tracker.reset()
                 
-                self.fill_below_substructure(i_cons, phi_min)
+                self.fill_below_substructure(i_cons, halo, phi_min)
                 
-                if self._too_far:
+                if halo._too_far:
                     # Traveled too far or adding in a large group.
-                    if self.verbose: print('Traveled too far exitting... ', self.subgroup_tracker.get_size(), end = ' ', flush = True)
+                    if self.verbose: print('Traveled too far exitting... ', halo.subgroup_tracker.get_size(), end = ' ', flush = True)
                     # Here we do a manual reset as we need to also reset the 'visited' array
-                    while not self.subgroup_tracker.is_empty():
-                        qelem = self.subgroup_tracker.get_top_elem()
-                        self.subgroup_tracker.remove_top_elem()
+                    while not halo.subgroup_tracker.is_empty():
+                        qelem = halo.subgroup_tracker.get_top_elem()
+                        halo.subgroup_tracker.remove_top_elem()
                         k = qelem.second
-                        self.visited[k] = False
+                        halo.visited[k] = False
                     
-                    while not self.subsurface_tracker.is_empty():
-                        qelem = self.subsurface_tracker.get_top_elem()
-                        self.subsurface_tracker.remove_top_elem()
+                    while not halo.subsurface_tracker.is_empty():
+                        qelem = halo.subsurface_tracker.get_top_elem()
+                        halo.subsurface_tracker.remove_top_elem()
                         k = qelem.second
-                        self.visited[k] = False
+                        halo.visited[k] = False
             
-                    self._too_far = False
+                    halo._too_far = False
                     break
                 
-                if self.new_min <= phi_min:
+                if halo.new_min <= phi_min:
                     # Moved into a lower potential well => exit
-                    if self.verbose: print('Found lower minimum:', self._current_subgroup_size, i_cons, end = ' ', flush = True)
+                    if self.verbose: print('Found lower minimum:', halo.subgroup_tracker.get_size(), i_cons, end = ' ', flush = True)
                     # Make saddle point a part of the main group
                     # Tag i_cons as part of the main group
                     
-                    self.group[i_cons] = self._current_group
+                    #self.group[i_cons] = self._current_group
                     qelem = (phi_cons, i_cons)
-                    self.group_tracker.add_elem(qelem)
+                    halo.group_tracker.add_elem(qelem)
                     
                     # Remove it from the surface
-                    self.surface_tracker.remove_top_elem()
+                    halo.surface_tracker.remove_top_elem()
                     
                     if phi_cons < phi_min:
                         phi_min = phi_cons
@@ -1155,27 +1370,27 @@ cdef class ParticleAssigner:
                         
                     # For completeness add it's neighbours to the surface.
                     for k in ngbs_temp:
-                        if self.surface_tracker.is_mask(k) or self.visited[k]:
+                        if halo.surface_tracker.is_mask(k) or halo.visited[k]:
                             # Avoid duplicates or going back to a particle that has already been visited
                             continue
                         else:
                         
                             # Insert particle in sorted order
-                            qelem = (self.phi_boost(k), k)
-                            self.surface_tracker.add_elem(qelem)
+                            qelem = (self.phi_boost(k,halo), k)
+                            halo.surface_tracker.add_elem(qelem)
                     
                     # Here we do a manual reset as we need to also reset the visited array
-                    while not self.subgroup_tracker.is_empty():
-                        qelem = self.subgroup_tracker.get_top_elem()
-                        self.subgroup_tracker.remove_top_elem()
+                    while not halo.subgroup_tracker.is_empty():
+                        qelem = halo.subgroup_tracker.get_top_elem()
+                        halo.subgroup_tracker.remove_top_elem()
                         k = qelem.second
-                        self.visited[k] = False
+                        halo.visited[k] = False
                     
-                    while not self.subsurface_tracker.is_empty():
-                        qelem = self.subsurface_tracker.get_top_elem()
-                        self.subsurface_tracker.remove_top_elem()
+                    while not halo.subsurface_tracker.is_empty():
+                        qelem = halo.subsurface_tracker.get_top_elem()
+                        halo.subsurface_tracker.remove_top_elem()
                         k = qelem.second
-                        self.visited[k] = False
+                        halo.visited[k] = False
                     
                     break
                     
@@ -1183,49 +1398,51 @@ cdef class ParticleAssigner:
                 else:
                     # Found a structure => add it in 
                     # Merge surfaces
-                    self.visited[i_cons] = True 
+                    halo.visited[i_cons] = True 
                     # Remove i_cons from sufrace
-                    self.surface_tracker.remove_top_elem()
+                    halo.surface_tracker.remove_top_elem()
                     # Merge subsurface and surface
-                    while not self.subsurface_tracker.is_empty():
+                    while not halo.subsurface_tracker.is_empty():
                         # remove lowest potential subsurface particle
-                        qelem = self.subsurface_tracker.get_top_elem()
+                        qelem = halo.subsurface_tracker.get_top_elem()
                         k = qelem.second
-                        self.subsurface_tracker.remove_top_elem()
+                        halo.subsurface_tracker.remove_top_elem()
                         
-                        if self.surface_tracker.is_mask(k) or self.visited[k]:
+                        if halo.surface_tracker.is_mask(k) or halo.visited[k]:
                             # Avoid duplicates or going back to a particle that has already been visited
                             continue
                         else:
                             # Add it to surface tracker
-                            self.surface_tracker.add_elem(qelem)
+                            halo.surface_tracker.add_elem(qelem)
                     
                     # Merge Group and Subgroup
                     # If subgroup large enough tag particles for follow up
-                    size_cond = self.subgroup_tracker.get_size() > 20
+                    size_cond = halo.subgroup_tracker.get_size() > 20
                     if size_cond:
-                        self._current_subgroup += 1
-                    while not self.subgroup_tracker.is_empty():
-                        qelem = self.subgroup_tracker.get_top_elem()
-                        self.subgroup_tracker.remove_top_elem()
+                        subgroup = []
+                        halo._current_subgroup += 1
+                    while not halo.subgroup_tracker.is_empty():
+                        qelem = halo.subgroup_tracker.get_top_elem()
+                        halo.subgroup_tracker.remove_top_elem()
                         k = qelem.second
                         phi_k = qelem.first
                         # By construction there can't be any duplicates to to save time we skip checking and merge directly...
                         # If the code is modified check that you don't introduce duplicates because they break the priority queues
-                        self.visited[k] = True
-                        self.group[k] = self._current_group
-                        self.group_tracker.add_elem(qelem)
+                        halo.visited[k] = True
+                        #self.group[k] = self._current_group
+                        halo.group_tracker.add_elem(qelem)
                         
                         if size_cond:
-                            self.subgroup[k] = self._current_subgroup
+                            subgroup.append(k)
+                            #self.subgroup[k] = self._current_subgroup
                             
-                        x = self.recentre_positions(self.pos[k], self.x0)
+                        x = self.recentre_positions(self.pos[k], halo.x0)
                         temp_xx = 0.0
                         for k_loc in range(len(x)):
                             temp_xx += x[k_loc]*x[k_loc] 
                         dist = np.sqrt(temp_xx)
-                        if dist > self.max_dist:
-                            self.max_dist = dist
+                        if dist > halo.max_dist:
+                            halo.max_dist = dist
                         
                         # Keep min and max up to date
                         if phi_k < phi_min:
@@ -1234,16 +1451,19 @@ cdef class ParticleAssigner:
                         if phi_k > phi_max:
                             phi_max = phi_k
                             i_max = k      
-                    
-                if self.group_tracker.get_size() > 0.25*len(self.pot):
+                    if size_cond:
+                        halo.subgroups.append(subgroup)
+                        
+                if halo.group_tracker.get_size() > 0.25*len(self.pot):
                     # Temporary measure to get a catalogue in EdS-cond, This is a last resort and in practice should never happen
-                    if self.verbose: print('Reached size limit (npart/4):', self.group_tracker.get_size(), end = ' ', flush = True)
+                    if self.verbose: print('Reached size limit (npart/4):', halo.group_tracker.get_size(), end = ' ', flush = True)
                     break
 
-        
+        halo.i_min = i_min
+        halo.i_max = i_max
         return i_min, i_max
     
-    cpdef is_bound(self, long i_min, long i_sad):
+    cpdef is_bound(self, long i_min, long i_sad, Halo halo):
         '''
         Binding check. compares the mechanical energy Kinetic + boosted Potential of all particles in i_in to the boosted potential evajulated at the location of i_sad, representing a saddle point.
         
@@ -1271,7 +1491,7 @@ cdef class ParticleAssigner:
         cdef long index
         cdef int j = 0
         
-        i_in_arr = self.get_current_group_particles()
+        i_in_arr = halo.get_current_group_particles()
         
         v_in = np.zeros((len(i_in_arr), self.vel.shape[1]))
         K = np.zeros(len(i_in_arr))
@@ -1299,8 +1519,8 @@ cdef class ParticleAssigner:
         factor_xx_phi = 0.25*self._H0**2 * (self._Omega_m / self._scale_factor - 2 * self._Omega_L * self._scale_factor*self._scale_factor)
         factor_xv = self._scale_factor * self._Ha
         
-        phi_p_sad = self.phi_boost(i_sad) + factor_xx_phi * temp_xx
-        phi_p_min = self.phi_boost(i_min) # By construction is 0 but we write it anyway, just in case
+        phi_p_sad = self.phi_boost(i_sad, halo) + factor_xx_phi * temp_xx
+        phi_p_min = self.phi_boost(i_min, halo) # By construction is 0 but we write it anyway, just in case
         
         sqrt_a = np.sqrt(self._scale_factor)
         
@@ -1318,7 +1538,7 @@ cdef class ParticleAssigner:
             
             
             K[i] = 0.5 * temp_vv + factor_xv * temp_xv + factor_xx_K * temp_xx # <= Explicit expansion terms
-            phi_p[i] = self.phi_boost(index) + factor_xx_phi * temp_xx + self._long_range_fac * temp_xx * self._scale_factor * self._scale_factor # <= Converted to physical potential
+            phi_p[i] = self.phi_boost(index, halo) + factor_xx_phi * temp_xx + self._long_range_fac * temp_xx * self._scale_factor * self._scale_factor # <= Converted to physical potential
             
             E[i] = K[i] + phi_p[i] - phi_p_min 
             if E[i] < phi_p_sad - phi_p_min:
@@ -1327,7 +1547,7 @@ cdef class ParticleAssigner:
         return bound_mask
 
     
-    cpdef segment(self, long i0, cnp.double_t[:] acc0, cnp.double_t r = 1.):
+    cpdef segment(self, long i0, cnp.double_t[:] acc0, cnp.ndarray[long, ndim = 1] ids_fof, cnp.double_t r = 1., Halo reuse_halo = None):
         '''
         Main user function. Segments all particles belong to the same group as particle 'i0'. The boosted potential here is calculated with respect to the position of particle 'i0' and with the acceleration vector 'acc0'
         
@@ -1348,100 +1568,38 @@ cdef class ParticleAssigner:
         cdef long i_min, i_sad, i0_fof, i0_temp, i0_itt
         cdef set mem = set()
         cdef cbool min_found
-
-        self.set_acc0(acc0)
-        self.set_x0(i0, self.pos[i0])
+        cdef Halo halo
+        if reuse_halo is None:
+            halo = Halo(self.nparts, ids_fof)
+        else:
+            halo = reuse_halo
+            halo.reset_computed_particles()
+        halo.set_acc0(acc0)
+        halo.set_x0(i0, self.pos[i0])
         
-        self._current_group += 1
-        self._current_subgroup = 0
+        #self._current_group += 1
+        halo._current_subgroup = 0
+        
         # Verify that the first minimum is not too far away.
         
-        i0 = self.itt_minimum(i0,r)
+        i0 = self.itt_minimum(i0, halo, r)
+        
         if i0 == -1:
-            return np.array([], dtype = 'i8'), i0, i0
+            return np.array([], dtype = 'i8'), i0, i0, halo
         
         # Find all particles with potential lower than minimum (This should only give back 1 particle)
-        self.set_x0(i0, self.pos[i0])
- 
-        self.fill_below(i0)
+        halo.set_x0(i0, self.pos[i0])
+    
+        self.fill_below(i0, halo)
+        
         # Grow potential surface
-        i_min, i_sad = self.grow()
+        i_min, i_sad = self.grow(halo)
     
-        #Binding check
+        # Binding check
         if self.no_binding: 
-            return self.get_current_group_particles(), i_min, i_sad
-        bound_mask = self.is_bound(i_min, i_sad)
-        return self.get_current_group_particles()[bound_mask], i_min, i_sad # output: i_min, i_sad, n_part(, subs, i_in)
+            return halo.get_current_group_particles(), i_min, i_sad, halo
+        bound_mask = self.is_bound(i_min, i_sad, halo)
+        halo.bound_mask = bound_mask
+        return halo.get_current_group_particles()[bound_mask], i_min, i_sad, halo # output: i_min, i_sad, n_part(, subs, i_in)
     
-    cpdef void reset(self):
-        '''
-        Method to operate a full reset of internal variables. This can be quite slow for large simulations. In this case prefer, reset_computed_particles.
-        '''
-        # Operates a full reset of all the internal arrays and structures. Can be a bit slow for large simulations
-        self.i0 = -1
-        self.x0 = None
-        self.acc0 = None
-        self.visited = np.zeros(self.pot.size, dtype = bool) # We may want to review these assignements
-        
-        self._computed = np.zeros(self.pot.size, dtype = bool)
-        self._phi = np.zeros(self.pot.size, dtype = 'f8') 
-        self.group = np.zeros(self.pot.size, dtype = 'i8')
-        self.subgroup = np.zeros(self.pot.size, dtype = 'i8')
-
-        self.group_tracker = Tracker(self.nparts)
-        self.subgroup_tracker = Tracker(self.nparts)
-        self.surface_tracker = Tracker(self.nparts)
-        self.subsurface_tracker = Tracker(self.nparts)
-        
-        self.bound_mask = np.zeros(self.pot.size, dtype = bool)
-        
-        self._current_group = 0
-        self._current_subgroup = 0
-        
-        self.new_min = 3.4e38
-        return
     
-    cdef void _reset_arrays(self, long i):
-        '''
-        Method to reset the internal values for a single particle.
-        This method is dangerous as it does not respect the order of the _computed_queue priority queue.
-        Do not use unless stricly respecting this ordering.
-        '''
-        self.visited[i] = False # We may want to review these assignements
-
-        self._computed[i] = False
-        self._phi[i] = 0.
-        self.group[i] = 0
-        self.subgroup[i] = 0
-        
-        self.bound_mask[i] = False
-        return
-    
-    cpdef void reset_computed_particles(self):
-        '''
-        Method that reset all the internal values for all particles that have a computed boosted potentials and resets all internal trackers. Faster than reset but can be exposed to issues if the tracking is tampered.
-        '''
-        # Only resets particles that for which phi_boost has been computed at least once.
-        self.i0 = -1
-        self.x0 = None
-        self.acc0 = None
-
-        cdef long i
-        cdef cpair[cnp.double_t, long] elem
-           
-        while not self._computed_queue.empty():
-            elem = self._computed_queue.top()
-            self._computed_queue.pop()
-            i = elem.second
-            self._reset_arrays(i)
-
-        self.group_tracker.reset()
-        self.subgroup_tracker.reset()
-        self.surface_tracker.reset()
-        self.subsurface_tracker.reset()
-        
-        self._current_group = 0
-        self._current_subgroup = 0
-        
-        self.new_min = 3.4e38
-        return
