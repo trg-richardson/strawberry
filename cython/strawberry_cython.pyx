@@ -18,7 +18,29 @@ cdef cbool compare_first(cpair[cnp.double_t, long] a, cpair[cnp.double_t, long] 
 
 cdef class Tracker:
     '''
-    Tracker class, used internally to keep track of groups of particles
+    Tracker class, used internally to keep track of groups of particles. Composed of a priority queue of c++ pairs (potential, id) sorted in increasing potential. Only highest potential particle can be accessed from the queue directly. To access other particles one must return the full queue using get_particles.
+
+    Parameters
+    ---------
+    nparts: (int) Total number of particles in the simulation
+
+    Methods:
+    ---------
+    - add_elem: Add element to tracker
+    
+    - get_top_elem: Get top element of tracker
+    
+    - remove_top_elem: Delete top element of the tracker
+    
+    - get_queue: Get copy of internal priority queue
+    
+    - get_size: Get current size of queue
+    
+    - is_empty: Check if queue is empty
+    
+    - is_mask: Check if a given id is within the queue
+    
+    - get_particles: Returns list of ids of all particles in the queue
     '''
     cdef cpp_pq queue
     cdef cnp.uint8_t[:] mask
@@ -33,15 +55,32 @@ cdef class Tracker:
         return
 
     cdef void add_elem(self, cpair[cnp.double_t,long] elem):
+        '''
+        Add element (float64, int64) to the tracker.
+        
+        Parameters:
+        ---------
+        elem: (cpair float64, int64) Tracker element to be added
+        '''
         self.size += 1
         self.mask[elem.second] = True
         self.queue.push(elem)
         return
 
     cdef cpair[cnp.double_t,long] get_top_elem(self):
+        '''
+        Return top element (float64, int64) of the tracker. Data is accessed using elem.first and elem.second properties
+        
+        Outputs:
+        ---------
+        elem: (cpair float64, int64) Tracker element to be added
+        '''
         return self.queue.top()
     
     cdef void remove_top_elem(self):
+        '''
+        Removes top element of the tracker.
+        '''
         cdef cpair[cnp.double_t,long] elem
         cdef long i
         elem = self.queue.top()
@@ -52,23 +91,65 @@ cdef class Tracker:
         return
     
     cdef cpp_pq get_queue(self):
+        '''
+        Returns a copy of the trackers internal priority queue.
+        
+        Outputs:
+        ---------
+        queue: (C++ priority queue) copy of internal priority queue
+        '''
         return self.queue
 
     cdef cnp.int64_t get_size(self):
+        '''
+        Returns the current number of elements being tracked
+
+        Outputs:
+        ---------
+        size: (int64) number of elements tracked by tracker
+        '''
         return self.size
 
     cdef void reset(self):
+        '''
+        Resets tracker by iteratively removing all elements.
+        '''
         while not self.queue.empty():
             self.remove_top_elem()
         return
 
     cdef cbool is_empty(self):
+        '''
+        Checks if tracker is empty
+
+        Outputs:
+        ---------
+        is_empty: (bool) True if the are no elements being tracked
+        '''
         return self.queue.empty()
 
     cdef cnp.uint8_t is_mask(self, cnp.int64_t i):
+        '''
+        Return state of the internal boolean mask of the tracker at index i. Allows to check if the particle with index i is being tracked.
+
+        Parameters:
+        ---------
+        i: (int64) Particle index
+        
+        Outputs:
+        ---------
+        mask: (bool) Value of mask for particle i
+        '''
         return self.mask[i]
 
     cdef cnp.ndarray[long, ndim = 1, cast = True] get_particles(self):
+        '''
+        Returns an array of the indices of all of the particles currently being tracked.
+
+        Outputs:
+        ---------
+        res: (Array of int64) Array of the indices of all particles currently tracked by the tracker.
+        '''
         cdef list res = []
         cdef cpp_pq queue_copy
         cdef cpair[cnp.double_t, long] elem
@@ -80,6 +161,49 @@ cdef class Tracker:
         return np.array(res, dtype = 'i8')
 
 cdef class Halo:
+    '''
+    Halo class. Used to track halo properties as defined by the potential well.
+
+    Parameters
+    ---------
+    nparts: (int) Total number of particles in the simulation
+    ids_fof: (Array of ints) optional, array of particle indices used as an initial seed for the particle assignment procedure.
+
+    Methods:
+    ---------
+    - reset: Applies a full reset to the Halo, deleting all saved information.
+    
+    -reset_computed_particles: Reset internal values for only computed particles, faster than reset() and avoid realocations
+    
+    -set_x0: Initialises i0 and x0 the index and position of the reference particle used for the calculation of the boosted potential
+    
+    -set_acc0: Initialises acc0 the reference acceleration used for the calculation of the boosted potential
+    
+    -get_i0: Returns i0 the index of the reference particle used for the calculation of the boosted potential
+    
+    -get_acc0: Returns acc0 the reference acceleration used for the calculation of the boosted potential
+    
+    -set_fof_ids: Sets the indices of the seed group used to find the reference position and acceleration
+    
+    -to_bool_array: Utility method used to transform uint8 MemoryViews into boolean NumPy Arrays
+    
+    -set_current_group: (To be deprecated) sets the id of the group
+    
+    -get_visited: Returns boolean array selecting all particles that have been visited (Memory warning for large simulations)
+    
+    -get_group_mask: Returns boolean array selecting all particles that have been assigned as being within the potential well of the halo (Memory warning for large simulations)
+    
+    -get_surface_mask: Returns boolean array selecting all particles that have been assigned as being connectied/adjacent to the potential well of the halo (Memory warning for large simulations)
+    
+    -get_current_group_particles: Returns array of indices of all particles assigned as being within the potential well of the halo
+    
+    -get_current_surface_particles: Returns array of indices of all particles assigned as being connectied/adjacent to the potential well of the halo
+    
+    -get_subgroups: Returns list of arrays containing the indices of particles assigned to a given subgroup
+    
+    -get_bound_mask: Returns boolean mask of the same size a sget_current_group_particles selecting particles which are dynamically bound tot the potential well
+    '''
+    
     cdef long nparts
     
     cdef long i0
@@ -119,7 +243,7 @@ cdef class Halo:
         
         self.ids_fof = ids_fof
         
-        #self.bound_mask = np.zeros(pot.size, dtype = bool)
+        # self.bound_mask is left unallocated until the we know the size of the halo.
         
         self._current_group = 0
         self._current_subgroup = 0
@@ -148,19 +272,13 @@ cdef class Halo:
         self.i0 = -1
         self.x0 = None
         self.acc0 = None
-        self.visited = np.zeros(self.nparts, dtype = bool) # We may want to review these assignements
+        self.visited = np.zeros(self.nparts, dtype = bool) 
         self._phi = np.zeros(self.nparts, dtype = 'f8') 
-        # self._computed = np.zeros(self.pot.size, dtype = bool)
-        # self._phi = np.zeros(self.pot.size, dtype = 'f8') 
-        # self.group = np.zeros(self.pot.size, dtype = 'i8')
-        # self.subgroup = np.zeros(self.pot.size, dtype = 'i8')
         self.computed_tracker = Tracker(self.nparts)
         self.group_tracker = Tracker(self.nparts)
         self.subgroup_tracker = Tracker(self.nparts)
         self.surface_tracker = Tracker(self.nparts)
         self.subsurface_tracker = Tracker(self.nparts)
-        
-        #self.bound_mask = np.zeros(self.pot.size, dtype = bool)
         
         self._current_group = 0
         self._current_subgroup = 0
@@ -171,16 +289,6 @@ cdef class Halo:
         self.i_min = -1
         self.i_max = -1
         return
-    cdef void gone_too_far(self):
-        self._too_far = True
-        return
-    
-    cdef void not_too_far(self):
-        self._too_far = False
-        return 
-    
-    cdef cbool is_too_far(self):
-        return self._too_far
     
     cdef void _reset_arrays(self, long i):
         '''
@@ -188,14 +296,9 @@ cdef class Halo:
         This method is dangerous as it does not respect the order of the _computed_queue priority queue.
         Do not use unless stricly respecting this ordering.
         '''
-        self.visited[i] = False # We may want to review these assignements
-
-        # self._computed[i] = False
+        self.visited[i] = False 
         self._phi[i] = 0.
-        # self.group[i] = 0
-        # self.subgroup[i] = 0
         
-        #self.bound_mask[i] = False
         return
     
     cpdef void reset_computed_particles(self):
@@ -203,9 +306,6 @@ cdef class Halo:
         Method that reset all the internal values for all particles that have a computed boosted potentials and resets all internal trackers. Faster than reset but can be exposed to issues if the tracking is tampered.
         '''
         # Only resets particles that for which phi_boost has been computed at least once.
-        # self.i0 = -1
-        # self.x0 = None
-        # self.acc0 = None
 
         cdef long i
         cdef cpair[cnp.double_t, long] elem
@@ -215,8 +315,7 @@ cdef class Halo:
             self.computed_tracker.remove_top_elem()
             i = elem.second
             self._reset_arrays(i)
-        #self.visited = np.zeros(self.nparts, dtype = bool)
-        #self.computed_tracker.reset()
+
         self.group_tracker.reset()
         self.subgroup_tracker.reset()
         self.surface_tracker.reset()
@@ -235,28 +334,49 @@ cdef class Halo:
     
     cpdef void set_x0(self, long i0, cnp.double_t[:] x0):
         '''
-        Function which sets 'x0' the reference position for the calculation of the boosted potential.
+        Function which sets 'i0' and 'x0' the index and position of the reference particle for the calculation of the boosted potential. 
+        While it is technically possible to use the index of one particle and the position of another this is not advised and will lead to undified behaviour
         
         Parameters:
         ----------
+        i0: (int) index of reference particle
         x0: (array of d-floats) d-dimensional refference position vector.
 
         '''
         self.i0 = i0
         self.x0 = x0
-        #cdef long i
-        #cdef cpair[cnp.double_t, long] elem
            
         self.reset_computed_particles()
         return
 
     cpdef long get_i0(self):
+        '''
+        Returns index of reference particle used to grow the Halo
+        
+        Outputs:
+        ----------
+        i0: (int) index of reference particle
+        '''
         return self.i0
     
     cpdef cnp.ndarray[cnp.float64_t, ndim = 1, cast = True] get_x0(self):
+        '''
+        Returns position of reference particle used to grow the Halo
+        
+        Outputs:
+        ----------
+        x0: (array of float) 1D array of reference position used to compute the boosted potential
+        '''
         return np.asarray(self.x0)
     
     cpdef cnp.ndarray[cnp.float64_t, ndim = 1, cast = True] get_acc0(self):
+        '''
+        Returns reference acceleration used to compute de boosted potential
+
+        Outputs:
+        ----------
+        acc0: (array of float) 1D array of reference acceleration used to compute the boosted potential
+        '''
         return np.asarray(self.acc0)
     
     cpdef void set_acc0(self, cnp.double_t[:] acc0):
@@ -284,7 +404,7 @@ cdef class Halo:
         
         Parameters:
         ----------
-        x0: (array of d-floats) d-dimensional refference acceleration vector.
+        ids_fof: (array of int) Array holding the indices of all the particles in a prior group.
 
         '''
         self.ids_fof = ids_fof 
@@ -292,64 +412,104 @@ cdef class Halo:
 
     
     def to_bool_array(self, lst):
+        '''
+        Transforms cython uint8 MemoryView into numpy boolean array that is usable as a mask
+
+        Parameters:
+        ----------
+        lst: 1-D MemoryView of dtype uint8
+
+        Outputs:
+        ----------
+        res: 1-D NumPy array of dtype bool
+        '''
         cdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast=True] res
         res = np.array(lst, dtype=bool)
         return res
         
     cpdef void set_current_group(self, long i):
+        '''
+        Set current group index (To be deprecated: Currently Unused)
+        '''
         self._current_group = i
         return
     
-    # cpdef cnp.ndarray[long, ndim = 1, cast = True] get_group_ledger(self):
-    #     cdef cnp.ndarray[long, ndim = 1, cast = True] res = np.asarray(self.group)
-    #     return res
-    
-    # cpdef cnp.ndarray[long, ndim = 1, cast = True] get_subgroup_ledger(self):
-    #     cdef cnp.ndarray[long, ndim = 1, cast = True] res = np.asarray(self.subgroup)
-    #     return res
-    
     cpdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] get_visited(self):
+        '''
+        Returns 1D mask of size n-parts flagging particles that have been visited by the ParticleAssigner
+        
+        Outputs:
+        ----------
+        mask: (Array of bool) Boolean mask of all particles visited during the particle assignment procedure
+        '''
         cdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] res = self.to_bool_array(self.visited)
         return res
 
     cpdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] get_group_mask(self):
+        '''
+        Returns 1D mask of size n-parts flagging particles that have been assigned to the halo group by the ParticleAssigner
+        
+        Outputs:
+        ----------
+        mask: (Array of bool) Boolean mask of all particles assigned to the halo group during the particle assignment procedure
+        '''
         cdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] res = self.to_bool_array(self.group_tracker.get_mask())
         return res
     
     cpdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] get_surface_mask(self):
+        '''
+        Returns 1D mask of size n-parts flagging particles that have been assigned to the halo surface by the ParticleAssigner
+        
+        Outputs:
+        ----------
+        mask: (Array of bool) Boolean mask of all particles assigned to the halo surface during the particle assignment procedure
+        '''
         cdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] res = self.to_bool_array(self.surface_tracker.get_mask())
         return res
     
-    cpdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] get_subsurface_mask(self):
-        cdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] res = self.to_bool_array(self.subsurface_tracker.get_mask())
-        return res
-    
-    cpdef cnp.ndarray[long, ndim = 1, cast = True] get_group_particles(self, i):
-        cdef cnp.ndarray[long, ndim = 1, cast = True] res = np.where(np.asarray(self.group) == i)[0]
-        return res
-    
     cpdef cnp.ndarray[long, ndim = 1, cast = True] get_current_group_particles(self):
+        '''
+        Returns 1D array of the indices of all particles currently assigned to the Halo, meaning that are inside the potential well (and not necesarily bound to it)
+
+        Outputs:
+        ----------
+        group: (Array of int) Array of the indices of all particles assigned to the Halo's potential well
+        '''
         return self.group_tracker.get_particles()
     
     cpdef cnp.ndarray[long, ndim = 1, cast = True] get_current_surface_particles(self):
+        '''
+        Returns 1D array of the indices of all particles currently connected/adjacent but not within the Halo's potential well
+
+        Outputs:
+        ----------
+        surface: (Array of int) Array of the indices of all particles currently connected/adjacent but not within the Halo's potential well
+        '''
         return self.surface_tracker.get_particles()
 
     cpdef list get_subgroups(self):
+        '''
+        Returns list of all subgroups within the main group. Each element contains a 1D array of the indices of all the particles assigned to that subgroup
+
+        Outputs:
+        ----------
+        subgroups: (list of Arrays of int) list of arrays of indices of all particles assigned to subgroups
+        '''
         return self.subgroups
 
     cpdef cnp.ndarray[long, ndim = 1, cast = True] get_bound_mask(self):
+        '''
+        Returns boolean mask array of the same size as get_current_group_particles selecting only particles that are dynamically bound to the Halo's potential well.
+
+        Outputs:
+        ----------
+        bound_mask: (Array of bool) Mask selecting Halo particles dynamically bound to the potential well
+        '''
         return self.to_bool_array(self.bound_mask)
-    # cpdef list get_subgroups(self, i):
-    #     cdef list res
-    #     cdef cnp.ndarray[long, ndim = 1, cast = True] ids = self.get_group_particles(i)
-    #     cdef cnp.ndarray[long, ndim = 1, cast = True] subgroups = self.get_subgroup_ledger()[ids]
-    #     cdef long index, j
-    #     res = [ids[subgroups == j] for j in range(0,int(np.max(subgroups))+1)]
-    #     return res
     
 cdef class ParticleAssigner:
     '''
-    ParticleAssigner class. This class is designed to assign particles to a structure given a potential surface and local acceleration defining the boosted potential (for details see: https://arxiv.org/abs/2107.13008). 
+    ParticleAssigner class. This class is designed to assign particles to a structure given a potential surface and local acceleration defining the boosted potential (for details see: https://arxiv.org/abs/2107.13008 and https://arxiv.org/abs/<INSERT NUMBER>). 
     
     The underlying algorithm relies on traveling an ensemble of connected particles in search of a saddle point in the boosted potential. It is designed to be agnostic of the particular geometry of the problem ans simply requires knowledge of the connectivity between nodes/particles. In general this means that the algorithm requires a list of the nearest neighbours to each particle to segement the different groups. 
     
@@ -359,43 +519,64 @@ cdef class ParticleAssigner:
     ----------
     ngbs: (list of arrays of int) list of neighbours to each particle, these take the form of arrays of indices pointing to the corresponding neighbours
     pot: (array of floats) global gravitation potential evaluated at the position of each particle
-    pos: (array of d-floats) positions of of particles in d-dimensional space.
-    Lbox: (float) simulation boxsize
-    Omega_Lambda: (float) Density of dark energy in units of the critical density (default to Einstein-de Sitter Omega_Lambda = 0.)
+    pos: (array of floats) positions of particles in d-dimensional space.
+    vel: (array of floats) velocities of particles in d-dimensional space.
     scale_factor: (float) Snapshot scale factor 'a' (defaults to a = 1.)
-    no_binding: (bool) switch turning off the binding check
-    verbose: (bool) switch toggling verbosity
+    Omega_m: (float) Density of dark matter in units of the critical density, note: flat cosmology is assumed (default to Einstein-de Sitter Omega_m = 1.)
+    Lbox: (float) simulation boxsize (defaults to 1000 h^{-1}Mpc)
+    H0: (float) Hubble parameter/constant (defaults to 100 km/s/Mpc)
+    threshold: (str) indentifier for which value is used for the large scale correction delta parameter (Defaults to EdS-cond, delta = 0, see get_delta_th method for specifics).
+    no_binding: (bool) switch turning off the binding check (defaults to False)
+    verbose: (bool) switch toggling verbosity (defaults to False)
+    custom_delta: (bool) switch which allows to ignore the threshold argument and provide a custom value of delta (defaults to False)
+    delta: (float) custom value of delta, custom_delta must be True to use this option (defaults to 0)
     
     Methods:
     ----------
-    - set_x0: sets the reference position to calculate the boosted potential
+    [Cosmology, Assuming Flat LCDM]
+    - update_cosmology: Update cosmological parameters and associated internal variables
+
+    - H_a: Hubble parameter computed at scale factor a
+
+    - H_dot: Time derivative of the Hubble parameter computed at scale factor a
+
+    - D: Linear growth factor D, computed at scale factor a
+
+    - g: D/a normalised such that g(a -> 0) = 1 
+
+    - w: Omega_L(a)/Omega_m(a)
+
+    - Omega_m: Omega_m(a)
+
+    - Omega_L: Omega_Lambda(a)
+
+    - time_of_a: Age of the universe at scale factor a
+
+    - Newton_Raphson: Newton_Raphson root finder
+
+    - get_zeta: LCDM spherical collapse zeta as defined in Mo et al. 2010
+
+    - get_delta_th: Precomputed values of the large scale factor for several spherical collapse contexts
     
-    - set_acc0: sets the reference acceleration to calculate the boosted potential
+    [Particle Tracking]
     
-    - phi_boost: returns the boosted potential at the postion of particle i
+    - phi_boost: returns the boosted potential at the postion of particle i (C only)
+
+    - get_phi_boost:returns the boosted potential at the postion of an array particles
     
-    - subfind_neighbours: modifies the neighbour's list to correspond to a definition equivalent to the subfind halo finder. 
+    - subfind_neighbours: (Untested) modifies the neighbour's list to correspond to a definition equivalent to the subfind halo finder. 
     
-    - reciprocal_neighbours: modifies the neighbour's list so that all neighbour connections are reciprocal, i.e all particles know of all particles it is a neighbour of.
-    
-    - binary_search: binary search algorith returning the argument position of the largest element that is smaller than a given value.
-    
-    - insert_potential_sorted: inserts an particle id into a list of particle ids such that the list remains sorted in increasing order.
-    
-    - check: recursive watershed algorithm finding all conected particles with lower potentials segementing them into internal and surface sets which are saved internally.
-    
-    - check_to_sets: same as check but explicitly takes the inner and surface sets as aguments instead of using internal variables.
+    - reciprocal_neighbours: (Untested) modifies the neighbour's list so that all neighbour connections are reciprocal, i.e all particles know of all particles it is a neighbour of.
     
     - fill_below: itterative watershed algorithm finding all conected particles with lower potentials segementing them into internal and surface sets which are saved internally.
     
     - fill_below_substructure: same as fill_below but explicitly takes the inner and surface sets as aguments instead of using internal variables.
     
-    - sort_surface: sorts particles assigned to the surface set of the structure in order of increasing boosted potential. 
-    
     - grow: grows the sturcture itteratively by including one by one the particles with the lowest bosted potential until a saddle point is found.
     
     - segment: main user function, selects all the connected particles that are assigned to the structure.
-    
+
+    - is_bound:
     '''
     
     cdef Py_ssize_t nparts
@@ -405,7 +586,6 @@ cdef class ParticleAssigner:
     cdef cnp.double_t[:] pot
     cdef cnp.double_t[:,:] pos
     cdef cnp.double_t[:,:] vel
-    #cdef long[:] ids_fof
     
     cdef cbool verbose
     cdef cbool no_binding
@@ -420,34 +600,10 @@ cdef class ParticleAssigner:
     cdef cnp.double_t _Ha
     cdef cnp.double_t _Hd
     cdef cnp.double_t _delta_th
-
-    #cdef long i0
-    #cdef cnp.double_t[:] x0
-    #cdef cnp.double_t[:] acc0
-    #cdef cnp.uint8_t[:] visited
-
-    #cdef cnp.uint8_t[:] _computed
-    #cdef cpp_pq _computed_queue
-    #cdef cnp.double_t[:] _phi 
-    #cdef cnp.int64_t[:] group
-    #cdef cnp.int64_t[:] subgroup
-    #cdef Tracker group_tracker
-    #cdef Tracker subgroup_tracker
-    #cdef Tracker surface_tracker
-    #cdef Tracker subsurface_tracker
-
-    #cdef cnp.uint8_t[:] bound_mask
-
-    
-    # cdef cnp.int64_t _current_group
-    # cdef cnp.int64_t _current_subgroup
-
-    # cdef cnp.double_t max_dist
-    # cdef cnp.double_t new_min
     cdef cnp.double_t _long_range_fac
     cdef cnp.double_t _zeta
     
-    # cdef cbool _too_far
+
         
     def __init__(self, cnp.ndarray[long, ndim = 2] ngbs, cnp.ndarray[double, ndim = 1] pot, cnp.ndarray[double, ndim = 2] pos, cnp.ndarray[double, ndim = 2] vel, 
                  cnp.double_t scale_factor = 1., cnp.double_t Omega_m = 1., cnp.double_t Lbox = 1000., cnp.double_t H0 = 100, str threshold = 'EdS-cond',
@@ -478,29 +634,7 @@ cdef class ParticleAssigner:
             self._delta_th = delta
         else:
             self._delta_th = self.get_delta_th(threshold)
-        # self.i0 = -1
-        # self.x0 = None
-        # self.acc0 = None
-        # self.visited = np.zeros(pot.size, dtype = bool) # We may want to review these assignements
-        
-        # self._computed = np.zeros(pot.size, dtype = bool)
-        # self._computed_queue = cpp_pq(compare_first)
-        # self._phi = np.zeros(pot.size, dtype = 'f8') 
-        # self.group = np.zeros(pot.size, dtype = 'i8')
-        # self.subgroup = np.zeros(pot.size, dtype = 'i8')
 
-        # self.group_tracker = Tracker(self.nparts)
-        # self.subgroup_tracker = Tracker(self.nparts)
-        # self.surface_tracker = Tracker(self.nparts)
-        # self.subsurface_tracker = Tracker(self.nparts)
-        
-        # self.bound_mask = np.zeros(pot.size, dtype = bool)
-        
-        # self._current_group = 0
-        # self._current_subgroup = 0
-        
-        #self.new_min = 3.4e38 # this is just initialising the variable
-        #self._too_far = False
         self._long_range_fac =  0.25 * self._delta_th *self._Omega_m * self._scale_factor**-3 * self._H0 * self._H0
         if verbose:
             print(f"long range factor: {self._long_range_fac}")
@@ -511,6 +645,15 @@ cdef class ParticleAssigner:
     # Everything should be in units of h
     
     def update_cosmology(self, scale_factor = None, Omega_m = None, Lbox = None):
+        '''
+        Updates internal cosmological parameters and recomputes internal properties.
+        
+        Parameters:
+        ----------
+        scale_factor: (float) Simulation scale factor.
+        Omega_m: (float) Matter density parameter Omega_m.
+        Lbox: (float) Simulation box size.
+        '''
         if Lbox != None:
             self.Lbox = Lbox
         if Omega_m != None:
@@ -523,39 +666,126 @@ cdef class ParticleAssigner:
             self._Hd = self.H_dot(scale_factor)
         self._delta_th = self.get_delta_th(self.threshold)
         self._long_range_fac = 0.25 * self._delta_th * self._Omega_m * self._scale_factor**-3 * self._H0 * self._H0
-        self.reset_computed_particles()
         return 
     
     def H_a(self, a):
+        '''
+        Computes the Hubble parameter H(a) at scale factor a
+        
+        Parameters:
+        ----------
+        a: (float) Scale factor
+        
+        Outputs:
+        ----------
+        H_a: (float) Hubble parameter H(a)
+        '''
         return self._H0 * np.sqrt(self._Omega_m/a**(3)+self._Omega_k/a**(2)+self._Omega_L)
 
     def H_dot(self, a):
+        '''
+        Computes the time derivative of Hubble parameter H(a) at scale factor a.
+        
+        Parameters:
+        ----------
+        a: (float) Scale factor
+        
+        Outputs:
+        ----------
+        H_dot: (float) time derivative of the hubble parameter H(a)
+        '''
         return -self._H0 / 2 / np.sqrt(self._Omega_m/a**(3)+self._Omega_k/a**(2)+self._Omega_L) * (3*self._Omega_m/a**(4) + 2*self._Omega_k/a**(3))
         
     def D(self, a):
+        '''
+        Computes the Linear growth factor D(a) at scale factor a
+        
+        Parameters:
+        ----------
+        a: (float) Scale factor
+        
+        Outputs:
+        ----------
+        D: (float) Linear Growth factor D(a)
+        '''
         f = lambda ap: (self._Omega_m*ap**(-1.) + self._Omega_L*ap**(2) + self._Omega_k)**(-3/2)
         d, err = self.H_a(a)/self._H0 * np.array(quad(f,1e-8,a))
         D0 = self.H_a(1.)/self._H0 * np.array(quad(f,1e-8,1.))[0]
         return d/D0
 
     def g(self, a):
+        '''
+        Computes the renormalise Linear growth factor g(a) at scale factor a. Normalised at a = 1e-5 such that g(1e-5) = 1. See Mo et al. (2010).
+        
+        Parameters:
+        ----------
+        a: (float) Scale factor
+        
+        Outputs:
+        ----------
+        g: (float) Renomalised linear Growth factor D(a)/a
+        '''
         g_i = self.D(1e-5)/1e-5
         return np.vectorize(self.D)(a)/a / g_i
 
     def w(self, a):
+        '''
+        Not dark energy equation of state. Computes the ratio of the dark energy and matter density parameters at scale factor a. See Mo et al. (2010).
+        
+        Parameters:
+        ----------
+        a: (float) Scale factor
+        
+        Outputs:
+        ----------
+        D: (float) Linear Growth factor D(a)
+        '''
         return (self._Omega_L/self._Omega_m) * a**3
 
     def Omega_m(self, a):
+        '''
+        Computes the matter density parameter at scale factor a
+        
+        Parameters:
+        ----------
+        a: (float) Scale factor
+        
+        Outputs:
+        ----------
+        Om: (float) Matter density parameter Omega_m(a)
+        '''
         return self._Omega_m * a**-3 * self._H0*self._H0/self.H_a(a)/self.H_a(a) 
 
     def Omega_L(self, a):
+        '''
+        Computes the dark energy density parameter at scale factor a
+        
+        Parameters:
+        ----------
+
+        a: (float) Scale factor
+        
+        Outputs:
+        ----------
+        OL: (float) Dark energy density parameter Omega_Lambda(a)
+        '''
         return self._Omega_L * self._H0**2/self.H_a(a)**2 
 
-    def t_H(self):
-        return 9.7779222 #h^{-1}Gyr
+    #def t_H(self):
+    #    return 9.7779222 #h^{-1}Gyr
 
     def time_of_a(self, a):
-        # in units of t_H
+        '''
+        Computes the age of the Universe at scale factor a in units of the Hubble time.
+        
+        Parameters:
+        ----------
+        a: (float) Scale factor
+        
+        Outputs:
+        ----------
+        T: (float) Age of the Universe at scale factor a
+        '''
         a = np.array(a)
         if a.size < 2:
             res,err = quad(lambda ap: 1.0/(ap*self.H_a(ap)/self._H0),0,a)
@@ -569,13 +799,15 @@ cdef class ParticleAssigner:
     
     def Newton_Raphson(self, f, xi, dx, tol, *args, **kwargs): 
         '''
-        This is the standard Newton-Raphson root finder "borrowed" from Numerical Recipes Vol.III
+        This is the standard Newton-Raphson root finder "borrowed" from Numerical Recipes 3rd edition (Press et al. 2003)
+        
         Parameters:
         ----------
         f: (callable) 1 parameter function to optmize
         xi: (float) starting position
         dx: (float) spacing used to numerically compute derivatives
         tol: (float) absolute tolerance criterion
+        
         Outputs:
         ----------
         xi_1: (float) root of f
@@ -599,6 +831,17 @@ cdef class ParticleAssigner:
         return xi_1
     
     def get_zeta(self, a):
+        '''
+        Mo et al. 2010 zeta variable used to compute the spherical turn around and collapse overdensity in Lambda CDM. See Chap. 5 for details. Here we compute this variable numerically rather than using the analytical approximation given by Mo et al.
+        
+        Parameters:
+        ----------
+        a: (float) Scale factor
+        
+        Outputs:
+        ----------
+        zeta: (float) value of zeta at scale factor a
+        '''
         def func(zeta, a):
             t_max = self.time_of_a(a)
             dy = lambda x: 1/np.sqrt(1/x - 1 + zeta * (x*x -1))
@@ -609,6 +852,27 @@ cdef class ParticleAssigner:
         return zeta
     
     def get_delta_th(self, threshold):
+        '''
+        Function computing various theoretically motivated values for the large scale correction parameter delta. These are accessed using an identifier string. For formulae and specifics see Mo et al. 2010
+        Recognized options: 
+        "EdS-cond" Condition for collapse in EdS cosmology (delta = 0), 
+        "EdS-coll" Linearly extrapolated overdensity at collapse in EdS cosmology, 
+        "EdS-ta-lin" Linearly extrapolated overdensity at turn-around in EdS cosmology, 
+        "EdS-ta-eul" Eularian overdensity at turn-around in EdS cosmology, 
+        "LCDM-cond" Condition for collapse in LCDM cosmologies, 
+        "LCDM-coll" Linearly extrapolated overdensity at collapse in LCDM cosmologies, 
+        "LCDM-ta-lin" Linearly extrapolated overdensity at turn-around in LCDM cosmologies, 
+        "LCDM-ta-lin" Eularian overdensity at turn-around in LCDM cosmologies.
+        
+        Parameters:
+        ----------
+        threshold: (str) model identifier
+        
+        Outputs:
+        ----------
+        delta: (float) value of delta for the given model and computed using the internal cosmological parameters.
+        '''
+        
         if 'EdS' in threshold:
             if "cond" in threshold:
                 res = 0.
@@ -619,7 +883,7 @@ cdef class ParticleAssigner:
             elif "ta-eul" in threshold:
                 res = 9*np.pi**2/16 - 1
             else:
-                raise ValueError(f'threshold definition {threshold} was not recognized options include:\n "EdS-cond", "EdS-coll", "EdS-ta-lin", "EdS-ta-eul", "LCDM-cond", "LCDM-coll", "LCDM-ta-lin", and "LCDM-ta-lin"')
+                raise ValueError(f'threshold definition {threshold} was not a recognized option:\n "EdS-cond", "EdS-coll", "EdS-ta-lin", "EdS-ta-eul", "LCDM-cond", "LCDM-coll", "LCDM-ta-lin", and "LCDM-ta-lin"')
         elif 'LCDM' in threshold:
             t_c = self.time_of_a(self._scale_factor)
             t_ta = t_c/2
@@ -635,9 +899,9 @@ cdef class ParticleAssigner:
                 zeta = self.get_zeta(self._scale_factor) 
                 res = self._Omega_L/self._Omega_m * self._scale_factor**3/zeta - 1
             else:
-                raise ValueError(f'threshold definition {threshold} was not recognized options include:\n "EdS-cond", "EdS-coll", "EdS-ta-lin", "EdS-ta-eul", "LCDM-cond", "LCDM-coll", "LCDM-ta-lin", and "LCDM-ta-lin"')
+                raise ValueError(f'threshold definition {threshold} was not a recognized option:\n "EdS-cond", "EdS-coll", "EdS-ta-lin", "EdS-ta-eul", "LCDM-cond", "LCDM-coll", "LCDM-ta-lin", and "LCDM-ta-lin"')
         else:
-            raise ValueError(f'threshold definition {threshold} was not recognized options include:\n "EdS-cond", "EdS-coll", "EdS-ta-lin", "EdS-ta-eul", "LCDM-cond", "LCDM-coll", "LCDM-ta-lin", and "LCDM-ta-lin"')
+            raise ValueError(f'threshold definition {threshold} was not a recognized option:\n "EdS-cond", "EdS-coll", "EdS-ta-lin", "EdS-ta-eul", "LCDM-cond", "LCDM-coll", "LCDM-ta-lin", and "LCDM-ta-lin"')
         return res
     
     
@@ -646,58 +910,28 @@ cdef class ParticleAssigner:
     # ================== Utility Methods ========================
     
     def to_bool_array(self, lst):
+        '''
+        Transforms cython uint8 MemoryView into numpy boolean array that is usable as a mask
+
+        Parameters:
+        ----------
+        lst: 1-D MemoryView of dtype uint8
+
+        Outputs:
+        ----------
+        res: 1-D NumPy array of dtype bool
+        '''
         cdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast=True] res
         res = np.array(lst, dtype=bool)
         return res
-        
-    # cpdef void set_current_group(self, long i):
-    #     self._current_group = i
-    #     return
-    
-    # cpdef cnp.ndarray[long, ndim = 1, cast = True] get_group_ledger(self):
-    #     cdef cnp.ndarray[long, ndim = 1, cast = True] res = np.asarray(self.group)
-    #     return res
-    
-    # cpdef cnp.ndarray[long, ndim = 1, cast = True] get_subgroup_ledger(self):
-    #     cdef cnp.ndarray[long, ndim = 1, cast = True] res = np.asarray(self.subgroup)
-    #     return res
-    
-    cpdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] get_visited(self, Halo halo):
-        cdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] res = self.to_bool_array(halo.visited)
-        return res
-
-    cpdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] get_group_mask(self, Halo halo):
-        cdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] res = self.to_bool_array(halo.group_tracker.get_mask())
-        return res
-    
-    cpdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] get_surface_mask(self, Halo halo):
-        cdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] res = self.to_bool_array(halo.surface_tracker.get_mask())
-        return res
-    
-    cpdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] get_subsurface_mask(self, Halo halo):
-        cdef cnp.ndarray[cnp.uint8_t, ndim = 1, cast = True] res = self.to_bool_array(halo.subsurface_tracker.get_mask())
-        return res
-    
-    # cpdef cnp.ndarray[long, ndim = 1, cast = True] get_group_particles(self, Halo halo):
-    #     cdef cnp.ndarray[long, ndim = 1, cast = True] res = np.where(np.asarray(self.group) == i)[0]
-    #     return res
-    
-    cpdef cnp.ndarray[long, ndim = 1, cast = True] get_current_group_particles(self, Halo halo):
-        return halo.group_tracker.get_particles()
-    
-    cpdef cnp.ndarray[long, ndim = 1, cast = True] get_current_surface_particles(self, Halo halo):
-        return halo.surface_tracker.get_particles()
-    
-    cpdef list get_subgroups(self, Halo halo):
-        # cdef list res
-        # cdef cnp.ndarray[long, ndim = 1, cast = True] ids = self.get_group_particles()
-        # cdef cnp.ndarray[long, ndim = 1, cast = True] subgroups = self.get_subgroup_ledger()[ids]
-        # cdef long index, j
-        # res = [ids[subgroups == j] for j in range(0,int(np.max(subgroups))+1)]
-        # return res
-        return halo.get_subgroups()
 
     cpdef cnp.double_t get_long_range_fac(self):
+        '''
+        Returns potential long range correction factor in physical units 0.25 * delta * Omega_m * a^-3 * H_0^2
+        Outputs:
+        ----------
+        long_range_fac (float) potential long range correction factor
+        '''
         return self._long_range_fac
     
     #####=================== Boost!!! ===========================
@@ -737,6 +971,7 @@ cdef class ParticleAssigner:
         Parameters:
         ----------
         i: (int or array of ints) index/array of indices of the particles for which to calculate the boosted potential.
+        halo: (Halo) halo with respect to which the boosted potential is to be computed
         
         Returns:
         ----------
@@ -769,16 +1004,10 @@ cdef class ParticleAssigner:
                             - self._long_range_fac * temp_xx  * self._scale_factor * self._scale_factor
             
             # We mark this particle as already computed.
-            
-            #if not halo.computed_tracker.is_mask(i):
             elem = (res, i)
             halo.computed_tracker.add_elem(elem)
             halo._phi[i] = res
-        #res = self._phi[i]
-        
-        #self._computed[i] = True
-        #elem = (res, i)
-        #self._computed_queue.push(elem)
+
         return res
     
     def get_phi_boost(self, indices, halo):
@@ -788,23 +1017,18 @@ cdef class ParticleAssigner:
         Parameters:
         ----------
         i: (int or array of ints) index/array of indices of the particles for which to calculate the boosted potential.
+        halo: (Halo) halo with respect to which the boosted potential is to be computed
         
         Returns:
         ----------
         phi_boost: (float or array of floats) boosted potential of the requested particles
         '''
         
-        # if halo.get_x0() is None:
-        #     raise ValueError('A reference position x0 must be set first. This can be done by calling the set_x0 or segment methods.')
-        # if halo.get_acc0() is None:
-        #     raise ValueError('A reference acceleration acc0 must be set first. This can be done by calling the set_acc0 or segment methods.')
-        
         indices = np.array(indices)
         if indices.size == 1:
             indices = np.array([indices.item(),])
         res = np.zeros(indices.size, dtype = 'f8')
-        #cond = np.zeros(indices.size, dtype = bool)
-        #res[cond] = np.asarray(self._phi)[indices[cond]]
+
         
         for j,i in enumerate(indices):
             res[j] = self.phi_boost(i, halo)
@@ -813,7 +1037,7 @@ cdef class ParticleAssigner:
         return res
     
     #####=================== Neighbours ================== 
-    #####     These are deprecated and will be deleted
+    ## These are untested, deprecated, and will be deleted
     
     def subfind_neighbours(self, Halo halo):
         '''
@@ -821,7 +1045,7 @@ cdef class ParticleAssigner:
         
         Parameters:
         ----------
-        None
+        halo: (Halo) Halo for which the boosted potenital will be computed
         '''
         cdef int i, j
         recip_ngbs = list(self.ngbs)
@@ -840,10 +1064,6 @@ cdef class ParticleAssigner:
     def reciprocal_neighbours(self):
         '''
         Function altering the list of neighbours to obtain a reciprocal connectivity, i.e if a particle is a neighbour of another then it is also connected to that other particle. Warning this functgion will rewrite the entire neighbours list and as such can take an extremely long amount of time if used on too many particles.
-        
-        Parameters:
-        ----------
-        None
         '''
         cdef int i,j
         cdef list recip_ngbs = list(self.ngbs)
@@ -858,6 +1078,19 @@ cdef class ParticleAssigner:
     # ================== Particle Assignment ====================
     
     cpdef long first_minimum(self, long i0, Halo halo, double r = 1):
+        '''
+        Function finding a minimum in the potential starting as defined for "halo". The search proceeds as an approximate gradient decent following the connectivity until a particle with no neighbours with lower potential values is found. 
+        
+        Parameters:
+        ----------
+        i0: (int) index of first guess particle
+        halo: (Halo) halo with respect to which the boosted potential is computed
+
+        Outputs:
+        ----------
+        i: (int) index of the minimum
+        '''
+        
         cdef int counter = 1
         cdef long i = i0
         cdef long j, k
@@ -910,6 +1143,18 @@ cdef class ParticleAssigner:
         return i
     
     cpdef long fof_minimum(self, long[:] ids_fof, Halo halo):
+        '''
+        First minimum search using a prior group of particle indices (ids_fof) and computing the boosted potential with respect to halo. Computes the boostded potential for particles in ids_fof and returns the index of the particle with the lowest boosted potential.
+        
+        Parameters:
+        ----------
+        ids_fof: (Array of int) array of the indices of particles in the prior group
+        halo: (Halo) halo withrespect to which to compute the boosted potential
+
+        Outputs:
+        ----------
+        i: (int) index of the particle in ids_fof with the lowest boosted potential
+        '''
         cdef long k, i_min
         cdef cnp.double_t phi_min
         cdef cpair[cnp.double_t, long] elem
@@ -922,6 +1167,20 @@ cdef class ParticleAssigner:
         return elem.second
     
     cpdef long itt_minimum(self, long i0, Halo halo, cnp.double_t r = 1.):
+        '''
+        Function that combines first_minimum and fof_minimum to find the minimum of the potential. If "halo "has an prior group (ids_fof), i0 is ignored and fof_minimum is used to start the approximate gradient descent.
+        
+        
+        Parameters:
+        ----------
+        i0: (int) index of starting particle, ignored if halo has a prior group (halo.ids_fof)
+        halo: (Halo) halo with respect to which the boosted potential is computed.
+        r: (float) maximum travel distance, raises ValueError if the gradient descent stray further than r from the starting particle.
+
+        Outputs:
+        ----------
+        i: (int) index of the particle with the lowest boosted potential.
+        '''
         cdef long i0_itt = i0
         cdef long i0_fof, i0_temp
         cdef cbool min_found = False
@@ -930,11 +1189,11 @@ cdef class ParticleAssigner:
         if len(halo.ids_fof) > 0:
             i0_fof = self.fof_minimum(halo.ids_fof, halo)
             i0_fof = self.first_minimum(i0_fof, halo, r)
-            if i0_fof not in set(halo.ids_fof) or halo.is_too_far():
+            if i0_fof not in set(halo.ids_fof) or halo._too_far:
                 if self.verbose: print(f"The initial minimum is outside of the seed group falling back to standard approach.", flush = True)
-                if halo.is_too_far(): halo.not_too_far()
+                if halo._too_far: halo._too_far = False
                 i0_temp = self.first_minimum(i0_itt, halo, r)
-                if i0_temp not in set(halo.ids_fof) or halo.is_too_far():
+                if i0_temp not in set(halo.ids_fof) or halo._too_far:
                     if self.verbose: print(f"The initial minimum is still outside of the seed group. Exiting", flush = True)
                     return -1
             else:
@@ -950,12 +1209,12 @@ cdef class ParticleAssigner:
         
         while not min_found: # Itterate over first minimum to check that it is indeed a minimum in it's own reference frame
             i0_temp = self.first_minimum(i0_itt, halo, r)
-            if i0_temp == -1 or halo.is_too_far():
+            if i0_temp == -1 or halo._too_far:
                 if self.verbose: print(f"Something went wrong itterating over minima. Exiting", flush = True)
                 return -1
             else: i0_itt = i0_temp
             if len(halo.ids_fof) > 0: # If we have a fof seed make sure we don't leave the group through here.
-                if i0_itt not in set(halo.ids_fof) or halo.is_too_far():
+                if i0_itt not in set(halo.ids_fof) or halo._too_far:
                     if self.verbose: print(f"The initial minimum is still outside of the seed group. Exiting", flush = True)
                     return -1
 
@@ -981,6 +1240,7 @@ cdef class ParticleAssigner:
         Parameters:
         ----------
         i: (int) index of the particle defining the level of the potential
+        halo: (Halo) halo with respect to which the boosted potential is to be computed, and within which data will be stored
         '''
         
         cdef double phi_curr = self.phi_boost(i, halo)
@@ -1015,7 +1275,7 @@ cdef class ParticleAssigner:
         j = elem.second
         
         while self.phi_boost(j, halo) - phi_curr < 0.0:
-            #self.group[j] = self._current_group
+
             halo.visited[j] = True
             elem = (self.phi_boost(j, halo), j)
             halo.group_tracker.add_elem(elem)
@@ -1048,8 +1308,7 @@ cdef class ParticleAssigner:
         Parameters:
         ----------
         i: (int) index of the particle defining the level of the potential
-        i_in: (set of ints) set of indices of particles curently assigned to a structure
-        i_surf: (set of ints) set of particles which are direct neighbours of particles that are within the structure.
+        halo: (Halo) halo with respect to which the boosted potential is to be computed, and within which data will be stored
         phi_min: (float) current minimum of the potential well
         '''
         #cdef cnp.ndarray[long, ndim = 1, cast = True] id_surf
@@ -1179,23 +1438,16 @@ cdef class ParticleAssigner:
         
         Parameters:
         ----------
-        i_in: (set of ints) set of indices of particles curently assigned to a structure
-        i_surf: (set of ints) set of particles which are direct neighbours of particles that are within the structure
+        halo: (Halo) halo with respect to which the boosted potential is to be computed, and within which data will be stored
         
         Returns:
         ----------
         i_min: (int) index of the particle with the lowest boosted potential in the group
         i_sad: (int) index of the particle corresponding to the saddle point in the boosted potetnial
-        n_part: (int) number of particles assigned to that group
-        (optional outputs)
-        subs: (list of 3-ints) same properties as for the main output but given for all thesubgroups that have been found
-        i_in: (set of ints) set of indices of all the particles contained in the structure
         '''
         cdef double phi_min, phi_max
         
         cdef long i_prev, n_part
-        #cdef cnp.ndarray[long, ndim = 1, cast = True] id_surf
-        #cdef cnp.ndarray[long, ndim = 1, cast = True] indices
         cdef long j, k, index, elem, k_loc
         
         cdef long i_cons
@@ -1471,6 +1723,7 @@ cdef class ParticleAssigner:
         ----------
         i_in: (set of N int) indices of connected particles with boosted potential below the saddle point energy.
         i_sad: (int) particle id of the saddle point particle
+        halo: (Halo) halo with respect to which the boosted potential is to be computed, and within which data will be stored
         
         Returns:
         ----------
@@ -1549,36 +1802,37 @@ cdef class ParticleAssigner:
     
     cpdef segment(self, long i0, cnp.double_t[:] acc0, cnp.ndarray[long, ndim = 1] ids_fof, cnp.double_t r = 1., Halo reuse_halo = None):
         '''
-        Main user function. Segments all particles belong to the same group as particle 'i0'. The boosted potential here is calculated with respect to the position of particle 'i0' and with the acceleration vector 'acc0'
+        Main user function. Segments all particles belong to the same group as particle 'i0'. The boosted potential here is calculated with respect to the position of particle 'i0' and with the acceleration vector 'acc0'. Prior initial guess particles need to be provide using ids_fof, 
         
         Parameters:
         ----------
         i0: (int) index of starting particle
-        acc0: (array of floats) acceleration vector used to calculate the boosted potential
+        acc0: (array of float) acceleration vector used to calculate the boosted potential
+        ids_fof: (array of int) particle ids of prior group to be used as an initial seed
+        r: (float) initial maximum distance initial potential search can travel, is adaptively expanded during growth of the seed 
+        reuse_halo: (Halo) pre-initialised halo within which data will be stored, allows to save significant allocation overhead although ensure that the halo has been reset
         
         Returns:
         ----------
+        i_in: (set of ints) set of indices of all the particles contained in the structure
         i_min: (int) index of the particle with the lowest boosted potential in the group
         i_sad: (int) index of the particle corresponding to the saddle point in the boosted potetnial
-        n_part: (int) number of particles assigned to that group
-        (optional outputs)
-        subs: (list of 3-ints) same properties as for the main output but given for all thesubgroups that have been found
-        i_in: (set of ints) set of indices of all the particles contained in the structure
+        halo: (Halo) halo with respect to which the boosted potential is to be computed, and within which data will be stored
+        
         '''
         cdef long i_min, i_sad, i0_fof, i0_temp, i0_itt
         cdef set mem = set()
         cdef cbool min_found
         cdef Halo halo
-        if reuse_halo is None:
+        if reuse_halo is None: # If we aren't reusing a Halo, create a new one
             halo = Halo(self.nparts, ids_fof)
-        else:
+        else: # If we are, clean it
             halo = reuse_halo
             halo.reset_computed_particles()
         halo.set_acc0(acc0)
         halo.set_x0(i0, self.pos[i0])
         
-        #self._current_group += 1
-        halo._current_subgroup = 0
+        halo._current_subgroup = 0 # This simply resets the subgroup index which is currently unused
         
         # Verify that the first minimum is not too far away.
         
