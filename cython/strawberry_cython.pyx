@@ -1204,6 +1204,7 @@ cdef class ParticleAssigner:
         halo.set_x0(i0_itt, self.pos[i0_itt])
         
         if i0_itt == self.first_minimum(i0_itt, halo, r):
+            if self.verbose: print(f"The initial minimum {i0_itt} was found immediately. Exiting", flush = True)
             min_found = True
             i0 = i0_itt
         
@@ -1228,7 +1229,7 @@ cdef class ParticleAssigner:
                 return -1
             mem.add(i0_itt) # Keep track of which particles have been visited to avoid getting stuck in a loop
         return i0
-    
+
     cpdef void fill_below(self, cnp.int64_t i, Halo halo):
         '''
         Itterative watershed function which finds all the particles continuosly connected to particle i that have a boosted potential lower than particle i. 
@@ -1829,6 +1830,7 @@ cdef class ParticleAssigner:
         else: # If we are, clean it
             halo = reuse_halo
             halo.reset_computed_particles()
+            halo.set_fof_ids(ids_fof)
         halo.set_acc0(acc0)
         halo.set_x0(i0, self.pos[i0])
         
@@ -1837,7 +1839,7 @@ cdef class ParticleAssigner:
         # Verify that the first minimum is not too far away.
         
         i0 = self.itt_minimum(i0, halo, r)
-        
+        if self.verbose: print(i0)
         if i0 == -1:
             return np.array([], dtype = 'i8'), i0, i0, halo
         
