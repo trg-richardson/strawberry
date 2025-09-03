@@ -1396,7 +1396,7 @@ cdef class ParticleAssigner:
                     halo._too_far = True
                     return
     
-                if halo.subgroup_tracker.get_size() > halo.group_tracker.get_size():
+                if halo.subgroup_tracker.get_size() > 5*halo.group_tracker.get_size():
                     if self.verbose:
                         print(f"Trying to add in a structure which is much larger than the current structure {halo.subgroup_tracker.get_size()} > {halo.group_tracker.get_size()}. Exiting.")
                     halo._too_far = True
@@ -1822,9 +1822,14 @@ cdef class ParticleAssigner:
         
         '''
         cdef long i_min, i_sad, i0_fof, i0_temp, i0_itt
+        
         cdef set mem = set()
         cdef cbool min_found
         cdef Halo halo
+        cdef cpair[cnp.double_t, long] elem
+        cdef cpp_pq temp_queue = cpp_pq(compare_first)
+        cdef long[:] ngbs_temp
+        
         if reuse_halo is None: # If we aren't reusing a Halo, create a new one
             halo = Halo(self.nparts, ids_fof)
         else: # If we are, clean it
@@ -1845,12 +1850,23 @@ cdef class ParticleAssigner:
         
         # Find all particles with potential lower than minimum (This should only give back 1 particle)
         halo.set_x0(i0, self.pos[i0])
-    
-        self.fill_below(i0, halo)
         
+        # ================================================
+        # Check if we haven't ended up in a double dip
+        i0_temp = self.fof_minimum(halo.ids_fof, halo)
+        i0_fof = self.first_minimum(i0_temp, halo, r) 
+        if i0_fof != i0 and i0_fof in ids_fof: # this makes sure the minimum is inside the fof group
+            if self.verbose: print(f"Double dip potential: {i0_fof} != {i0}, Attempting to force fill")
+            i0 = i0_fof
+        # =====================================================
+        self.fill_below(i0, halo)
         # Grow potential surface
         i_min, i_sad = self.grow(halo)
+
+        
     
+        
+                
         # Binding check
         if self.no_binding: 
             return halo.get_current_group_particles(), i_min, i_sad, halo
