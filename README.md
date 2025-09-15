@@ -13,7 +13,6 @@ This repository is where we're developping Strawberry, a topology based halo fin
 ### Instalation
 
 - clone repository
-- `cd cython`
 - `pip install .`
 
 ### Requirements for example codes
