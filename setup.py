@@ -5,7 +5,7 @@ import numpy as np
 extensions = [
     Extension(
         "strawberry_cython",
-        sources=["src/trawberry_cython.pyx"],
+        sources=["src/strawberry_cython.pyx"],
         include_dirs=[np.get_include()],
         extra_compile_args=["-O3"]# Include NumPy's header files
     )
