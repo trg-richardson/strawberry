@@ -15,7 +15,7 @@ This repository is where we're developping Strawberry, a topology based halo fin
 - clone repository
 - `pip install .`
 
-### Requirements for example codes
+### Requirements for example codes in `tools/`
 
 - h5py
 - tqdm
