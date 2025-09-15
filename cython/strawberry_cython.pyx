@@ -392,8 +392,6 @@ cdef class Halo:
         self.acc0 = np.zeros(len(acc0))
         for k in range(len(acc0)):
             self.acc0[k] =  acc0[k]
-        #cdef long i
-        #cdef cpair[cnp.double_t, long] elem
            
         self.reset_computed_particles()
         return
@@ -616,7 +614,6 @@ cdef class ParticleAssigner:
         self.pot = pot
         self.pos = pos
         self.vel = vel
-        # self.ids_fof = ids_fof
         
         self.verbose = verbose
         self.no_binding = no_binding
@@ -903,9 +900,6 @@ cdef class ParticleAssigner:
         else:
             raise ValueError(f'threshold definition {threshold} was not a recognized option:\n "EdS-cond", "EdS-coll", "EdS-ta-lin", "EdS-ta-eul", "LCDM-cond", "LCDM-coll", "LCDM-ta-lin", and "LCDM-ta-lin"')
         return res
-    
-    
-
     
     # ================== Utility Methods ========================
     
@@ -1247,7 +1241,6 @@ cdef class ParticleAssigner:
         cdef double phi_curr = self.phi_boost(i, halo)
         cdef long[:] ngbs_temp
         cdef long j, k, l, index
-        #cdef cnp.ndarray[long, ndim = 1, cast = True] id_surf
         cdef cnp.ndarray[long, ndim = 1, cast = True] indices
         cdef cpair[cnp.double_t, long] elem, top_elem
         
@@ -1256,7 +1249,6 @@ cdef class ParticleAssigner:
         halo.surface_tracker.reset()
         
         # Put starting particle in group
-        #self.group[i] = self._current_group
         halo.visited[i] = True
         elem = (self.phi_boost(i, halo), i)
         halo.group_tracker.add_elem(elem)
@@ -1312,7 +1304,6 @@ cdef class ParticleAssigner:
         halo: (Halo) halo with respect to which the boosted potential is to be computed, and within which data will be stored
         phi_min: (float) current minimum of the potential well
         '''
-        #cdef cnp.ndarray[long, ndim = 1, cast = True] id_surf
         cdef cnp.double_t[:] x
         cdef cnp.double_t temp_xx
         cdef double dist
@@ -1352,7 +1343,6 @@ cdef class ParticleAssigner:
                 print(f"ngbs: {[ngb for ngb in self.ngbs[i]]}", flush = True)
                 print(f"pots: {[self.phi_boost(ngb,halo) for ngb in self.ngbs[i]]}", flush = True)
                 print(f"visited: {[halo.visited[ngb] for ngb in self.ngbs[i]]}", flush = True)
-                #print(f"groups: {[self.group[ngb] for ngb in self.ngbs[i]]}", flush = True)
             return
         
         elem = halo.subsurface_tracker.get_top_elem()
@@ -1366,7 +1356,6 @@ cdef class ParticleAssigner:
                 halo.subsurface_tracker.remove_top_elem()
                 
                 if halo.subsurface_tracker.is_empty():
-                    #self._too_far = True
                     if self.verbose: print(f"subsurface queue empty {j}", flush = True)
                     return
                 elem = halo.subsurface_tracker.get_top_elem()
@@ -1424,7 +1413,6 @@ cdef class ParticleAssigner:
             
             #========= Test ================        
             if halo.subsurface_tracker.is_empty():
-                #self._too_far = True
                 if self.verbose: print(f"subsurface queue empty {j}", flush = True)
                 return
             #=============================== 
@@ -1533,7 +1521,6 @@ cdef class ParticleAssigner:
                 if self.verbose: 
                     print(f"{i_cons} low_pot_cond failed: Has no neighbours with lower potential", flush = True)
                     print(f"Relative potentials: {[self.phi_boost(ngb, halo) - self.phi_boost(i_cons, halo) for ngb in self.ngbs[i_cons]]}", flush = True)
-                    #print(f"Neighbouring groups: {[self.group[ngb] for ngb in self.ngbs[i_cons]]}", flush = True)
                     print(f"Neighbouring visits: {[halo.visited[ngb] for ngb in self.ngbs[i_cons]]}", flush = True)
                     print(f"Neighbouring surface: {[halo.surface_tracker.is_mask(ngb) for ngb in self.ngbs[i_cons]]}", flush = True)
             
@@ -1550,7 +1537,6 @@ cdef class ParticleAssigner:
             if if_cond:
                 # Tag i_cons as part of the main group
                 qelem = (phi_cons, i_cons)
-                #self.group[i_cons] = self._current_group
                 halo.group_tracker.add_elem(qelem)
                 
                 # Remove it from the surface
@@ -1606,8 +1592,6 @@ cdef class ParticleAssigner:
                     if self.verbose: print('Found lower minimum:', halo.subgroup_tracker.get_size(), i_cons, end = ' ', flush = True)
                     # Make saddle point a part of the main group
                     # Tag i_cons as part of the main group
-                    
-                    #self.group[i_cons] = self._current_group
                     qelem = (phi_cons, i_cons)
                     halo.group_tracker.add_elem(qelem)
                     
@@ -1627,7 +1611,6 @@ cdef class ParticleAssigner:
                             # Avoid duplicates or going back to a particle that has already been visited
                             continue
                         else:
-                        
                             # Insert particle in sorted order
                             qelem = (self.phi_boost(k,halo), k)
                             halo.surface_tracker.add_elem(qelem)
@@ -1679,15 +1662,13 @@ cdef class ParticleAssigner:
                         halo.subgroup_tracker.remove_top_elem()
                         k = qelem.second
                         phi_k = qelem.first
-                        # By construction there can't be any duplicates to to save time we skip checking and merge directly...
+                        # By construction there can't be any duplicates so to save time we skip checking and merge directly...
                         # If the code is modified check that you don't introduce duplicates because they break the priority queues
                         halo.visited[k] = True
-                        #self.group[k] = self._current_group
                         halo.group_tracker.add_elem(qelem)
                         
                         if size_cond:
                             subgroup.append(k)
-                            #self.subgroup[k] = self._current_subgroup
                             
                         x = self.recentre_positions(self.pos[k], halo.x0)
                         temp_xx = 0.0
@@ -1863,15 +1844,11 @@ cdef class ParticleAssigner:
         # Grow potential surface
         i_min, i_sad = self.grow(halo)
 
-        
-    
-        
-                
         # Binding check
         if self.no_binding: 
             return halo.get_current_group_particles(), i_min, i_sad, halo
         bound_mask = self.is_bound(i_min, i_sad, halo)
         halo.bound_mask = bound_mask
-        return halo.get_current_group_particles()[bound_mask], i_min, i_sad, halo # output: i_min, i_sad, n_part(, subs, i_in)
+        return halo.get_current_group_particles()[bound_mask], i_min, i_sad, halo
     
     
