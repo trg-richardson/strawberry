@@ -691,7 +691,8 @@ cdef class ParticleAssigner:
         ----------
         H_dot: (float) time derivative of the hubble parameter H(a)
         '''
-        return -self._H0 / 2 / np.sqrt(self._Omega_m/a**(3)+self._Omega_k/a**(2)+self._Omega_L) * (3*self._Omega_m/a**(4) + 2*self._Omega_k/a**(3))
+        return -0.5*self._H0*self._H0 * (3*self._Omega_m/a**(3) + 2*self._Omega_k/a**(2))
+        #return -self._H0 / 2 / np.sqrt(self._Omega_m/a**(3)+self._Omega_k/a**(2)+self._Omega_L) * (3*self._Omega_m/a**(4) + 2*self._Omega_k/a**(3))
         
     def D(self, a):
         '''
@@ -993,10 +994,11 @@ cdef class ParticleAssigner:
             for k in range(len(x)):
                 temp_xx += x[k]*x[k]
                 temp_xa += x[k]*halo.acc0[k]
-            res = (self.pot[i] - self.pot[halo.i0]) / self._scale_factor \
-                            + temp_xa / self._scale_factor \
+            res = (self.pot[i] - self.pot[halo.i0]) \
+                            + temp_xa \
                             - self._long_range_fac * temp_xx  * self._scale_factor * self._scale_factor
-            
+                # (self.pot[i] - self.pot[halo.i0])/self._scale_factor  \         
+                #+ temp_xa / self._scale_factor \
             # We mark this particle as already computed.
             elem = (res, i)
             halo.computed_tracker.add_elem(elem)
@@ -1721,7 +1723,7 @@ cdef class ParticleAssigner:
         cdef cnp.double_t[:] K
         cdef cnp.double_t[:] E
         cdef cnp.uint8_t[:] bound_mask
-        cdef double phi_p_sad, temp_xx, temp_xv, temp_vv, factor_xx_K, factor_xx_phi, factor_xv, sqrt_a
+        cdef double phi_p_sad, temp_xx, temp_xv, temp_vv, factor_xx_K, factor_xx_phi, factor_xv, a3, a2
         cdef long i = 0
         cdef long index
         cdef int j = 0
@@ -1744,20 +1746,23 @@ cdef class ParticleAssigner:
         
 
         x = self.recentre_positions(self.pos[i_sad],self.pos[i_min])
+
+        a2 = self._scale_factor * self._scale_factor
+        a3 = self._scale_factor * self._scale_factor * self._scale_factor
         
         temp_xx = 0.0
         
         for j in range(len(x)):
             temp_xx += x[j]*x[j]
             
-        factor_xx_K = 0.5*self._Ha**2 * self._scale_factor*self._scale_factor
-        factor_xx_phi = 0.25*self._H0**2 * (self._Omega_m / self._scale_factor - 2 * self._Omega_L * self._scale_factor*self._scale_factor)
+        factor_xx_K = 0.5*self._Ha**2 * a2
+        factor_xx_phi = 0.25*self._H0**2 * (self._Omega_m / self._scale_factor - 2 * self._Omega_L * a2)
         factor_xv = self._scale_factor * self._Ha
         
         phi_p_sad = self.phi_boost(i_sad, halo) + factor_xx_phi * temp_xx
         phi_p_min = self.phi_boost(i_min, halo) # By construction is 0 but we write it anyway, just in case
         
-        sqrt_a = np.sqrt(self._scale_factor)
+        
         
         for i, index in enumerate(i_in_arr):
             x = self.recentre_positions(self.pos[index],self.pos[i_min])
@@ -1771,9 +1776,9 @@ cdef class ParticleAssigner:
                 temp_xv += v[j]*x[j]
                 temp_vv += v[j]*v[j]
             
-            
+            # the units of all terms should be a^2 (km/s)^2
             K[i] = 0.5 * temp_vv + factor_xv * temp_xv + factor_xx_K * temp_xx # <= Explicit expansion terms
-            phi_p[i] = self.phi_boost(index, halo) + factor_xx_phi * temp_xx + self._long_range_fac * temp_xx * self._scale_factor * self._scale_factor # <= Converted to physical potential
+            phi_p[i] = self.phi_boost(index, halo) + factor_xx_phi * temp_xx + self._long_range_fac * temp_xx * a2 # <= Converted to physical potential
             
             E[i] = K[i] + phi_p[i] - phi_p_min 
             if E[i] < phi_p_sad - phi_p_min:
