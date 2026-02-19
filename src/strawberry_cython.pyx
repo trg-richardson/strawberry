@@ -587,6 +587,7 @@ cdef class ParticleAssigner:
     
     cdef cbool verbose
     cdef cbool no_binding
+    cdef cbool _custom_delta
     cdef str threshold
 
     cdef cnp.double_t Lbox
@@ -601,7 +602,6 @@ cdef class ParticleAssigner:
     cdef cnp.double_t _long_range_fac
     cdef cnp.double_t _zeta
     
-
         
     def __init__(self, cnp.ndarray[long, ndim = 2] ngbs, cnp.ndarray[double, ndim = 1] pot, cnp.ndarray[double, ndim = 2] pos, cnp.ndarray[double, ndim = 2] vel, 
                  cnp.double_t scale_factor = 1., cnp.double_t Omega_m = 1., cnp.double_t Lbox = 1000., cnp.double_t H0 = 100, str threshold = 'EdS-cond',
@@ -627,7 +627,8 @@ cdef class ParticleAssigner:
         self._H0 = H0
         self._Ha = self.H_a(self._scale_factor)
         self._Hd = self.H_dot(self._scale_factor)
-        if custom_delta:
+        self._custom_delta = custom_delta
+        if self._custom_delta:
             self._delta_th = delta
         else:
             self._delta_th = self.get_delta_th(threshold)
@@ -661,8 +662,9 @@ cdef class ParticleAssigner:
             self._scale_factor = scale_factor
             self._Ha = self.H_a(scale_factor)
             self._Hd = self.H_dot(scale_factor)
-        self._delta_th = self.get_delta_th(self.threshold)
-        self._long_range_fac = 0.25 * self._delta_th * self._Omega_m * self._scale_factor**-3 * self._H0 * self._H0
+        if not self._custom_delta:
+            self._delta_th = self.get_delta_th(self.threshold)
+            self._long_range_fac = 0.25 * self._delta_th * self._Omega_m * self._scale_factor**-3 * self._H0 * self._H0
         return 
     
     def H_a(self, a):
@@ -883,21 +885,35 @@ cdef class ParticleAssigner:
             else:
                 raise ValueError(f'threshold definition {threshold} was not a recognized option:\n "EdS-cond", "EdS-coll", "EdS-ta-lin", "EdS-ta-eul", "LCDM-cond", "LCDM-coll", "LCDM-ta-lin", and "LCDM-ta-lin"')
         elif 'LCDM' in threshold:
-            t_c = self.time_of_a(self._scale_factor)
-            t_ta = t_c/2
-            a_ta = self.Newton_Raphson(f = lambda a: self.time_of_a(a) - t_ta, xi = 0.1, dx = 1e-6, tol = 1e-6)
-            zeta = self.get_zeta(a_ta) 
-            if "cond" in threshold:
-                res = 9/10 * (2 * self.w(self._scale_factor))**(1/3)
-            elif "coll" in threshold:
-                res = 3/5 * self.g(self._scale_factor) * (1 + zeta) * (self.w(self._scale_factor)/zeta)**(1./3.)
-            elif "ta-lin" in threshold:
-                res = 3/5 * self.g(a_ta) * (1 + zeta) * (self.w(a_ta)/zeta)**(1./3.)
-            elif "ta-eul" in threshold:
-                zeta = self.get_zeta(self._scale_factor) 
-                res = self._Omega_L/self._Omega_m * self._scale_factor**3/zeta - 1
+            if 1. - self._Omega_m < 1e-5: # Fall back to EdS values when cosmology is close to EdS
+                if self.verbose:
+                    print("Falling back to EdS because: 1-Om = ",1. - self._Omega_m)
+                if "cond" in threshold:
+                    res = 0.
+                elif "coll" in threshold:
+                    res = 3/5*(3*np.pi/2)**(2/3.)
+                elif "ta-lin" in threshold:
+                    res = 3/5*(3*np.pi/4)**(2/3.)
+                elif "ta-eul" in threshold:
+                    res = 9*np.pi**2/16 - 1
+                else:
+                    raise ValueError(f'threshold definition {threshold} was not a recognized option:\n "EdS-cond", "EdS-coll", "EdS-ta-lin", "EdS-ta-eul", "LCDM-cond", "LCDM-coll", "LCDM-ta-lin", and "LCDM-ta-lin"')
             else:
-                raise ValueError(f'threshold definition {threshold} was not a recognized option:\n "EdS-cond", "EdS-coll", "EdS-ta-lin", "EdS-ta-eul", "LCDM-cond", "LCDM-coll", "LCDM-ta-lin", and "LCDM-ta-lin"')
+                t_c = self.time_of_a(self._scale_factor)
+                t_ta = t_c/2
+                a_ta = self.Newton_Raphson(f = lambda a: self.time_of_a(a) - t_ta, xi = 0.1, dx = 1e-6, tol = 1e-6)
+                zeta = self.get_zeta(a_ta) 
+                if "cond" in threshold:
+                    res = 9/10 * (2 * self.w(self._scale_factor))**(1/3)
+                elif "coll" in threshold:
+                    res = 3/5 * self.g(self._scale_factor) * (1 + zeta) * (self.w(self._scale_factor)/zeta)**(1./3.)
+                elif "ta-lin" in threshold:
+                    res = 3/5 * self.g(a_ta) * (1 + zeta) * (self.w(a_ta)/zeta)**(1./3.)
+                elif "ta-eul" in threshold:
+                    zeta = self.get_zeta(self._scale_factor) 
+                    res = self._Omega_L/self._Omega_m * self._scale_factor**3/zeta - 1
+                else:
+                    raise ValueError(f'threshold definition {threshold} was not a recognized option:\n "EdS-cond", "EdS-coll", "EdS-ta-lin", "EdS-ta-eul", "LCDM-cond", "LCDM-coll", "LCDM-ta-lin", and "LCDM-ta-lin"')
         else:
             raise ValueError(f'threshold definition {threshold} was not a recognized option:\n "EdS-cond", "EdS-coll", "EdS-ta-lin", "EdS-ta-eul", "LCDM-cond", "LCDM-coll", "LCDM-ta-lin", and "LCDM-ta-lin"')
         return res
